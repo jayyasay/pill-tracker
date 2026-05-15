@@ -10,40 +10,12 @@
   width: min(1240px, 100%);
   margin: 0 auto;
   padding: 28px;
-  border: 1px solid var(--line);
-  border-radius: 32px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(245, 251, 255, 0.92)),
-    var(--panel-bg);
-  box-shadow:
-    0 24px 60px rgba(41, 182, 246, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.95);
   overflow: hidden;
-}
-
-.panel::before {
-  content: '';
-  position: absolute;
-  inset: 18px;
-  border: 1px solid rgba(41, 182, 246, 0.1);
-  border-radius: 24px;
-  pointer-events: none;
-}
-
-.noise {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.18;
-  background-image:
-    radial-gradient(circle at 1px 1px, rgba(41, 182, 246, 0.1) 1px, transparent 0);
-  background-size: 10px 10px;
-  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.7), transparent 92%);
 }
 
 .topbar {
   display: flex;
-  align-items: end;
+  flex-direction: column;
   justify-content: space-between;
   gap: 24px;
   margin-bottom: 28px;
@@ -63,7 +35,6 @@
 .topbar h1,
 .loading-state h1 {
   margin: 0;
-  max-width: 10ch;
   font-size: clamp(3.25rem, 9vw, 6.5rem);
   line-height: 0.92;
   letter-spacing: -0.07em;
@@ -76,12 +47,6 @@
 .calendar-meta,
 .day-card strong {
   color: var(--muted);
-}
-
-.topbar-copy {
-  max-width: 27ch;
-  font-size: 1.08rem;
-  line-height: 1.6;
 }
 
 .dashboard-grid,
@@ -106,7 +71,21 @@
   backdrop-filter: blur(8px);
 }
 
+.activity-log-card {
+  border-radius: 28px;
+  border: 1px solid rgba(41, 182, 246, 0.16);
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(255, 255, 255, 0.52),
+      transparent 45%
+    ),
+    linear-gradient(160deg, rgba(225, 245, 254, 0.84), rgba(179, 229, 252, 0.72));
+  backdrop-filter: blur(8px);
+}
+
 .intro-card {
+  border: unset;
   padding: 28px;
   display: flex;
   flex-direction: column;
@@ -114,20 +93,28 @@
   min-height: 520px;
   background:
     linear-gradient(140deg, rgba(15, 38, 56, 0.98), rgba(41, 182, 246, 0.62)),
-    radial-gradient(circle at top right, rgba(225, 245, 254, 0.28), transparent 30%);
+    radial-gradient(
+      circle at top right,
+      rgba(225, 245, 254, 0.28),
+      transparent 30%
+    );
   color: #f6fcff;
   overflow: hidden;
   position: relative;
 }
 
 .intro-card::after {
-  content: '';
+  content: "";
   position: absolute;
   inset: auto -10% -22% auto;
   width: 260px;
   height: 260px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(225, 245, 254, 0.42), transparent 66%);
+  background: radial-gradient(
+    circle,
+    rgba(225, 245, 254, 0.42),
+    transparent 66%
+  );
   filter: blur(18px);
 }
 
@@ -184,6 +171,7 @@
   color: #f9fdff;
 }
 
+.activity-log-card,
 .form-card {
   padding: 28px;
 }
@@ -201,6 +189,23 @@
   margin-bottom: 18px;
 }
 
+.section-heading h2 {
+  margin: 0;
+  font-family: var(--heading);
+  font-size: clamp(1.5rem, 3vw, 2.2rem);
+  line-height: 1;
+  letter-spacing: -0.05em;
+  color: var(--ink);
+}
+
+.activity-log-card .section-heading {
+  align-items: start;
+}
+
+.activity-log-card .lead {
+  max-width: 32ch;
+}
+
 .schedule-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -208,12 +213,96 @@
 }
 
 .schedule-card {
-  padding: 22px;
   border-radius: 26px;
   border: 1px solid rgba(41, 182, 246, 0.12);
   background: rgba(255, 255, 255, 0.72);
+  overflow: hidden;
   display: grid;
-  gap: 18px;
+  gap: 0;
+  box-shadow: 0 10px 30px rgba(41, 182, 246, 0.08);
+}
+
+.schedule-card-banner {
+  position: relative;
+  min-height: 184px;
+  display: flex;
+  align-items: flex-end;
+  padding: 20px;
+  overflow: hidden;
+}
+
+.schedule-card-banner-overlay {
+  position: absolute;
+  inset: 0;
+  opacity: 0.96;
+}
+
+.schedule-card-banner::before,
+.schedule-card-banner::after {
+  content: "";
+  position: absolute;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.schedule-card-banner::before {
+  inset: 22px auto auto 18px;
+  width: 120px;
+  height: 120px;
+  background: rgba(255, 255, 255, 0.16);
+  filter: blur(2px);
+}
+
+.schedule-card-banner::after {
+  right: -28px;
+  bottom: -30px;
+  width: 140px;
+  height: 140px;
+  background: rgba(255, 255, 255, 0.15);
+  filter: blur(10px);
+}
+
+.schedule-card-banner-copy {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.schedule-card-banner-kicker {
+  display: inline-flex;
+  width: fit-content;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.88);
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.schedule-card-banner h3 {
+  margin: 0;
+  font-size: clamp(1.5rem, 2.6vw, 2.15rem);
+  line-height: 0.98;
+  letter-spacing: -0.06em;
+  color: #ffffff;
+  font-family: var(--heading);
+}
+
+.schedule-card-banner p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.schedule-card-body {
+  display: grid;
+  gap: 16px;
+  padding: 18px 18px 20px;
 }
 
 .schedule-card-top {
@@ -232,6 +321,19 @@
 
 .schedule-card-actions > button {
   flex: 1 1 120px;
+}
+
+.schedule-card .schedule-card-actions {
+  justify-content: flex-start;
+}
+
+.view-button {
+  padding: 12px 18px;
+  border: 1px solid rgba(41, 182, 246, 0.24);
+  border-radius: 999px;
+  background: rgba(225, 245, 254, 0.72);
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .schedule-name {
@@ -278,12 +380,126 @@
   line-height: 1.35;
 }
 
+.activity-log-list {
+  display: grid;
+  gap: 12px;
+}
+
+.activity-log-item {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(41, 182, 246, 0.12);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.9),
+    rgba(241, 249, 255, 0.96)
+  );
+}
+
+.activity-log-badge {
+  width: fit-content;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(225, 245, 254, 0.84);
+}
+
+.activity-log-badge.schedule_created {
+  color: #167ab0;
+  background: rgba(129, 212, 250, 0.28);
+}
+
+.activity-log-badge.schedule_updated {
+  color: #0f648f;
+  background: rgba(179, 229, 252, 0.45);
+}
+
+.activity-log-badge.schedule_deleted {
+  color: #8d1212;
+  background: rgba(255, 220, 220, 0.78);
+}
+
+.activity-log-badge.intake_completed {
+  color: #0d6d98;
+  background: rgba(41, 182, 246, 0.18);
+}
+
+.activity-log-badge.intake_reopened {
+  color: #3a6790;
+  background: rgba(225, 245, 254, 0.84);
+}
+
+.activity-log-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.activity-log-copy p {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.98rem;
+  line-height: 1.45;
+}
+
+.activity-log-copy span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.tone-1 .schedule-card-banner-overlay {
+  background:
+    linear-gradient(160deg, rgba(41, 182, 246, 0.96), rgba(79, 195, 247, 0.78)),
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.24), transparent 42%);
+}
+
+.tone-2 .schedule-card-banner-overlay {
+  background:
+    linear-gradient(160deg, rgba(79, 195, 247, 0.92), rgba(225, 245, 254, 0.72)),
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.22), transparent 38%);
+}
+
+.tone-3 .schedule-card-banner-overlay {
+  background:
+    linear-gradient(160deg, rgba(15, 38, 56, 0.94), rgba(41, 182, 246, 0.78)),
+    radial-gradient(circle at 75% 0%, rgba(255, 255, 255, 0.18), transparent 32%);
+}
+
+.tone-4 .schedule-card-banner-overlay {
+  background:
+    linear-gradient(160deg, rgba(179, 229, 252, 0.98), rgba(129, 212, 250, 0.76)),
+    radial-gradient(circle at bottom right, rgba(255, 255, 255, 0.18), transparent 38%);
+}
+
+.tone-5 .schedule-card-banner-overlay {
+  background:
+    linear-gradient(160deg, rgba(225, 245, 254, 0.98), rgba(79, 195, 247, 0.78)),
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.18), transparent 40%);
+}
+
 .list-empty {
   padding: 24px;
   border-radius: 24px;
   border: 1px dashed rgba(41, 182, 246, 0.22);
   background: rgba(255, 255, 255, 0.4);
   color: var(--muted);
+}
+
+.activity-log-list .list-empty {
+  border-style: solid;
+  border-color: rgba(41, 182, 246, 0.2);
+  background:
+    radial-gradient(
+      circle at 82% 10%,
+      rgba(255, 255, 255, 0.48),
+      transparent 34%
+    ),
+    linear-gradient(140deg, rgba(41, 182, 246, 0.16), rgba(129, 212, 250, 0.26));
 }
 
 .pill-form {
@@ -675,6 +891,105 @@
   color: var(--muted);
 }
 
+.calendar-skeleton {
+  border-radius: 28px;
+  border: 1px solid rgba(41, 182, 246, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+  overflow: hidden;
+}
+
+.calendar-skeleton-surface {
+  display: grid;
+  gap: 0;
+}
+
+.calendar-skeleton-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(120px, 1fr));
+  padding: 14px 20px 0;
+  gap: 0;
+}
+
+.calendar-skeleton-cell {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.skeleton-line,
+.skeleton-pill {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  background: rgba(41, 182, 246, 0.16);
+}
+
+.skeleton-line::after,
+.skeleton-pill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0),
+    rgba(255, 255, 255, 0.72),
+    rgba(255, 255, 255, 0)
+  );
+  animation: skeleton-shimmer 1.25s ease-in-out infinite;
+}
+
+.skeleton-weekday {
+  width: 62%;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.skeleton-day-number {
+  width: 28px;
+  height: 18px;
+  border-radius: 8px;
+}
+
+.skeleton-day-weekday {
+  width: 38px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.skeleton-headline {
+  width: min(540px, 80vw);
+  height: clamp(52px, 9vw, 104px);
+  border-radius: 16px;
+}
+
+.skeleton-summary-value {
+  width: 42%;
+  height: clamp(34px, 5vw, 54px);
+  border-radius: 12px;
+}
+
+.skeleton-summary-copy {
+  width: 78%;
+  height: 14px;
+  border-radius: 999px;
+}
+
+.skeleton-progress {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.skeleton-pill {
+  height: 34px;
+  border-radius: 999px;
+}
+
+@keyframes skeleton-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
 .ghost-button {
   padding: 12px 18px;
   background: rgba(41, 182, 246, 0.12);
@@ -801,7 +1116,7 @@
     padding: 16px;
   }
 
-  .pill-form label:last-of-type input[type='date'] {
+  .pill-form label:last-of-type input[type="date"] {
     min-height: 52px;
   }
 
@@ -813,6 +1128,10 @@
     width: 100%;
   }
 
+  .calendar-header-actions {
+    flex-direction: column-reverse;
+  }
+  
   .calendar-header-actions,
   .calendar-summary {
     width: 100%;

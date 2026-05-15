@@ -1,175 +1,207 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import './App.css'
+import { useEffect, useState, type FormEvent } from "react";
+import "./App.css";
 
-type Route = { kind: 'home' } | { kind: 'calendar'; token: string }
+type Route = { kind: "home" } | { kind: "calendar"; token: string };
 
 type ScheduleIntake = {
-  id: string
-  dayLabel: string
-  doseLabel: string
-  scheduledAt: string
-  completedAt: string | null
-}
+  id: string;
+  dayLabel: string;
+  doseLabel: string;
+  scheduledAt: string;
+  completedAt: string | null;
+};
 
 type ScheduleSummary = {
-  id: string
-  token: string
-  medicine: string
-  durationDays: number
-  timesPerDay: number
-  startDate: string
-  createdAt: string
-  totalIntakes: number
-  completedIntakes: number
-}
+  id: string;
+  token: string;
+  medicine: string;
+  durationDays: number;
+  timesPerDay: number;
+  startDate: string;
+  createdAt: string;
+  totalIntakes: number;
+  completedIntakes: number;
+};
 
 type ScheduleDetail = ScheduleSummary & {
-  intakes: ScheduleIntake[]
-}
+  intakes: ScheduleIntake[];
+};
+
+type ActivityLogEntry = {
+  id: string;
+  actionType: string;
+  summary: string;
+  scheduleToken: string | null;
+  medicine: string | null;
+  details: Record<string, unknown>;
+  createdAt: string;
+};
 
 type ScheduleFormState = {
-  medicine: string
-  durationDays: string
-  timesPerDay: string
-  startDate: string
-}
+  medicine: string;
+  durationDays: string;
+  timesPerDay: string;
+  startDate: string;
+};
 
 type CalendarCell = {
-  dateKey: string
-  dayNumber: number
-  isInSchedule: boolean
-  isToday: boolean
-  isCurrentMonth: boolean
-  items: ScheduleIntake[]
-}
+  dateKey: string;
+  dayNumber: number;
+  isInSchedule: boolean;
+  isToday: boolean;
+  isCurrentMonth: boolean;
+  items: ScheduleIntake[];
+};
 
 const defaultForm: ScheduleFormState = {
-  medicine: '',
-  durationDays: '7',
-  timesPerDay: '3',
+  medicine: "",
+  durationDays: "7",
+  timesPerDay: "3",
   startDate: dateKey(new Date()),
-}
+};
 
-const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function parseDateOnly(value: string) {
-  const normalizedDate = value.includes('T') ? value.slice(0, 10) : value
-  return new Date(`${normalizedDate}T12:00:00`)
+  const normalizedDate = value.includes("T") ? value.slice(0, 10) : value;
+  return new Date(`${normalizedDate}T12:00:00`);
 }
 
 function dateKey(date: Date) {
-  const year = date.getFullYear()
-  const month = `${date.getMonth() + 1}`.padStart(2, '0')
-  const day = `${date.getDate()}`.padStart(2, '0')
-  return `${year}-${month}-${day}`
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function addDays(date: Date, days: number) {
-  const next = new Date(date)
-  next.setDate(next.getDate() + days)
-  return next
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
 }
 
 function startOfDay(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
 function startOfMonth(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1)
+  return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
 function endOfMonth(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth() + 1, 0)
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
 }
 
 function startOfWeek(date: Date) {
-  const next = new Date(date)
-  next.setDate(next.getDate() - next.getDay())
-  return next
+  const next = new Date(date);
+  next.setDate(next.getDate() - next.getDay());
+  return next;
 }
 
 function endOfWeek(date: Date) {
-  const next = new Date(date)
-  next.setDate(next.getDate() + (6 - next.getDay()))
-  return next
+  const next = new Date(date);
+  next.setDate(next.getDate() + (6 - next.getDay()));
+  return next;
 }
 
 function formatDateLabel(dateValue: string) {
-  const date = parseDateOnly(dateValue)
+  const date = parseDateOnly(dateValue);
 
-  return new Intl.DateTimeFormat('en', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  }).format(date)
+  return new Intl.DateTimeFormat("en", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(date);
 }
 
 function formatClockLabel(isoValue: string) {
-  return new Intl.DateTimeFormat('en', {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(isoValue))
+  return new Intl.DateTimeFormat("en", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(isoValue));
 }
 
 function formatCompletedTimestamp(isoValue: string) {
-  const date = new Date(isoValue)
-  const parts = new Intl.DateTimeFormat('en', {
-    day: 'numeric',
-    month: 'short',
-    hour: 'numeric',
-    minute: '2-digit',
+  const date = new Date(isoValue);
+  const parts = new Intl.DateTimeFormat("en", {
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
     hour12: true,
-  }).formatToParts(date)
+  }).formatToParts(date);
 
-  const day = parts.find((part) => part.type === 'day')?.value ?? ''
-  const month = parts.find((part) => part.type === 'month')?.value ?? ''
-  const hour = parts.find((part) => part.type === 'hour')?.value ?? ''
-  const minute = parts.find((part) => part.type === 'minute')?.value ?? ''
-  const dayPeriod = parts.find((part) => part.type === 'dayPeriod')?.value ?? ''
+  const day = parts.find((part) => part.type === "day")?.value ?? "";
+  const month = parts.find((part) => part.type === "month")?.value ?? "";
+  const hour = parts.find((part) => part.type === "hour")?.value ?? "";
+  const minute = parts.find((part) => part.type === "minute")?.value ?? "";
+  const dayPeriod =
+    parts.find((part) => part.type === "dayPeriod")?.value ?? "";
 
-  return `${day} ${month}, ${hour}:${minute}${dayPeriod.toLowerCase()}`
+  return `${day} ${month}, ${hour}:${minute}${dayPeriod.toLowerCase()}`;
+}
+
+function formatActivityTimestamp(isoValue: string) {
+  return formatCompletedTimestamp(isoValue);
+}
+
+function getActivityLabel(actionType: string) {
+  switch (actionType) {
+    case "schedule_created":
+      return "Created";
+    case "schedule_updated":
+      return "Updated";
+    case "schedule_deleted":
+      return "Deleted";
+    case "intake_completed":
+      return "Completed";
+    case "intake_reopened":
+      return "Reopened";
+    default:
+      return "Activity";
+  }
 }
 
 function getRouteFromLocation(): Route {
-  if (typeof window === 'undefined') {
-    return { kind: 'home' }
+  if (typeof window === "undefined") {
+    return { kind: "home" };
   }
 
-  const match = window.location.pathname.match(/^\/calendar\/([^/]+)$/)
+  const match = window.location.pathname.match(/^\/calendar\/([^/]+)$/);
 
   if (match) {
-    return { kind: 'calendar', token: decodeURIComponent(match[1]) }
+    return { kind: "calendar", token: decodeURIComponent(match[1]) };
   }
 
-  return { kind: 'home' }
+  return { kind: "home" };
 }
 
 function buildCalendarCells(schedule: ScheduleDetail, monthCursor: Date) {
-  const scheduleStart = parseDateOnly(schedule.startDate)
-  const scheduleEnd = addDays(scheduleStart, schedule.durationDays - 1)
-  const visibleMonthStart = startOfMonth(monthCursor)
-  const visibleMonthEnd = endOfMonth(monthCursor)
-  const visibleStart = startOfWeek(visibleMonthStart)
-  const visibleEnd = endOfWeek(visibleMonthEnd)
-  const intakeMap = new Map<string, ScheduleIntake[]>()
+  const scheduleStart = parseDateOnly(schedule.startDate);
+  const scheduleEnd = addDays(scheduleStart, schedule.durationDays - 1);
+  const visibleMonthStart = startOfMonth(monthCursor);
+  const visibleMonthEnd = endOfMonth(monthCursor);
+  const visibleStart = startOfWeek(visibleMonthStart);
+  const visibleEnd = endOfWeek(visibleMonthEnd);
+  const intakeMap = new Map<string, ScheduleIntake[]>();
 
   for (const intake of schedule.intakes) {
-    const items = intakeMap.get(intake.dayLabel) ?? []
-    items.push(intake)
-    intakeMap.set(intake.dayLabel, items)
+    const items = intakeMap.get(intake.dayLabel) ?? [];
+    items.push(intake);
+    intakeMap.set(intake.dayLabel, items);
   }
 
-  const weeks: CalendarCell[][] = []
-  let cursor = new Date(visibleStart)
+  const weeks: CalendarCell[][] = [];
+  let cursor = new Date(visibleStart);
 
   while (cursor <= visibleEnd) {
-    const week: CalendarCell[] = []
+    const week: CalendarCell[] = [];
 
     for (let dayOffset = 0; dayOffset < 7; dayOffset += 1) {
-      const current = addDays(cursor, dayOffset)
-      const currentKey = dateKey(current)
-      const isInSchedule = current >= scheduleStart && current <= scheduleEnd
-      const isToday = currentKey === dateKey(new Date())
+      const current = addDays(cursor, dayOffset);
+      const currentKey = dateKey(current);
+      const isInSchedule = current >= scheduleStart && current <= scheduleEnd;
+      const isToday = currentKey === dateKey(new Date());
 
       week.push({
         dateKey: currentKey,
@@ -180,192 +212,301 @@ function buildCalendarCells(schedule: ScheduleDetail, monthCursor: Date) {
           current.getMonth() === monthCursor.getMonth() &&
           current.getFullYear() === monthCursor.getFullYear(),
         items: intakeMap.get(currentKey) ?? [],
-      })
+      });
     }
 
-    weeks.push(week)
-    cursor = addDays(cursor, 7)
+    weeks.push(week);
+    cursor = addDays(cursor, 7);
   }
 
   return {
-    monthLabel: new Intl.DateTimeFormat('en', {
-      month: 'long',
-      year: 'numeric',
+    monthLabel: new Intl.DateTimeFormat("en", {
+      month: "long",
+      year: "numeric",
     }).format(monthCursor),
     weeks,
-  }
+  };
 }
 
 function isCompletionBlocked(intake: ScheduleIntake) {
-  const cutoff = addDays(startOfDay(new Date()), 5)
-  return parseDateOnly(intake.scheduledAt) >= cutoff
+  const cutoff = addDays(startOfDay(new Date()), 5);
+  return parseDateOnly(intake.scheduledAt) >= cutoff;
 }
 
 function getScheduleDetailUrl(token: string) {
   if (import.meta.env.DEV) {
-    return `/api/schedules/${encodeURIComponent(token)}`
+    return `/api/schedules/${encodeURIComponent(token)}`;
   }
 
-  return `/api/schedules?token=${encodeURIComponent(token)}`
+  return `/api/schedules?token=${encodeURIComponent(token)}`;
 }
 
 function getDeleteScheduleUrl(token: string) {
   if (import.meta.env.DEV) {
-    return `/api/schedules/${encodeURIComponent(token)}`
+    return `/api/schedules/${encodeURIComponent(token)}`;
   }
 
-  return `/api/schedules?token=${encodeURIComponent(token)}`
+  return `/api/schedules?token=${encodeURIComponent(token)}`;
+}
+
+function getUpdateScheduleUrl(token: string) {
+  if (import.meta.env.DEV) {
+    return `/api/schedules/${encodeURIComponent(token)}`;
+  }
+
+  return `/api/schedules?token=${encodeURIComponent(token)}`;
 }
 
 function getUpdateIntakeUrl(intakeId: string) {
   if (import.meta.env.DEV) {
-    return `/api/intakes/${encodeURIComponent(intakeId)}`
+    return `/api/intakes/${encodeURIComponent(intakeId)}`;
   }
 
-  return `/api/intakes?id=${encodeURIComponent(intakeId)}`
+  return `/api/intakes?id=${encodeURIComponent(intakeId)}`;
+}
+
+function getActivityLogUrl() {
+  return "/api/activity-logs?limit=8";
 }
 
 function App() {
-  const [form, setForm] = useState<ScheduleFormState>(defaultForm)
-  const [schedules, setSchedules] = useState<ScheduleSummary[]>([])
-  const [selectedSchedule, setSelectedSchedule] = useState<ScheduleDetail | null>(
-    null,
-  )
-  const [route, setRoute] = useState<Route>(() => getRouteFromLocation())
+  const [form, setForm] = useState<ScheduleFormState>(defaultForm);
+  const [schedules, setSchedules] = useState<ScheduleSummary[]>([]);
+  const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([]);
+  const [selectedSchedule, setSelectedSchedule] =
+    useState<ScheduleDetail | null>(null);
+  const [route, setRoute] = useState<Route>(() => getRouteFromLocation());
   const [monthCursor, setMonthCursor] = useState<Date>(() =>
     startOfMonth(new Date()),
-  )
-  const [loadingSchedules, setLoadingSchedules] = useState(true)
-  const [loadingDetail, setLoadingDetail] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [status, setStatus] = useState<string>('Ready to build your regimen.')
+  );
+  const [loadingSchedules, setLoadingSchedules] = useState(true);
+  const [loadingActivityLogs, setLoadingActivityLogs] = useState(true);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editingScheduleToken, setEditingScheduleToken] = useState<string | null>(
+    null,
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string>("Ready to build your regimen.");
 
   function navigate(path: string) {
     if (window.location.pathname !== path) {
-      window.history.pushState({}, '', path)
+      window.history.pushState({}, "", path);
     }
-    setRoute(getRouteFromLocation())
-    if (path === '/') {
-      setSelectedSchedule(null)
-      setError(null)
-      setStatus('Ready to build your regimen.')
+    setRoute(getRouteFromLocation());
+    if (path === "/") {
+      setSelectedSchedule(null);
+      setEditingScheduleToken(null);
+      setError(null);
+      setStatus("Ready to build your regimen.");
+    }
+  }
+
+  async function loadSchedulesList(
+    signal?: AbortSignal,
+    showLoading = false,
+  ) {
+    if (showLoading) {
+      setLoadingSchedules(true);
+    }
+
+    try {
+      const response = await fetch("/api/schedules", {
+        signal,
+      });
+
+      if (!response.ok) {
+        throw new Error("We could not load the schedule list.");
+      }
+
+      const payload = (await response.json()) as ScheduleSummary[];
+      setSchedules(payload);
+    } catch (loadError) {
+      if ((loadError as Error).name !== "AbortError") {
+        setError((loadError as Error).message);
+      }
+    } finally {
+      if (showLoading) {
+        setLoadingSchedules(false);
+      }
+    }
+  }
+
+  async function loadActivityLogs(
+    signal?: AbortSignal,
+    showLoading = false,
+  ) {
+    if (showLoading) {
+      setLoadingActivityLogs(true);
+    }
+
+    try {
+      const response = await fetch(getActivityLogUrl(), {
+        signal,
+      });
+
+      if (!response.ok) {
+        throw new Error("We could not load the activity log.");
+      }
+
+      const payload = (await response.json()) as ActivityLogEntry[];
+      setActivityLogs(payload);
+    } catch (loadError) {
+      if ((loadError as Error).name !== "AbortError") {
+        setError((loadError as Error).message);
+      }
+    } finally {
+      if (showLoading) {
+        setLoadingActivityLogs(false);
+      }
     }
   }
 
   useEffect(() => {
-    const onPopState = () => setRoute(getRouteFromLocation())
-    window.addEventListener('popstate', onPopState)
-    return () => window.removeEventListener('popstate', onPopState)
-  }, [])
+    const onPopState = () => setRoute(getRouteFromLocation());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   useEffect(() => {
     document.title =
-      route.kind === 'calendar'
-        ? `Calendar · ${selectedSchedule?.medicine ?? 'Pill Track'}`
-        : 'Pill Track'
-  }, [route, selectedSchedule])
+      route.kind === "calendar"
+        ? `Calendar · ${selectedSchedule?.medicine ?? "Pill Track"}`
+        : "Pill Track";
+  }, [route, selectedSchedule]);
 
   useEffect(() => {
-    const controller = new AbortController()
+    const controller = new AbortController();
 
-    async function loadSchedules() {
+    async function loadInitialData() {
+      setLoadingSchedules(true);
+      setLoadingActivityLogs(true);
+
       try {
-        const response = await fetch('/api/schedules', {
-          signal: controller.signal,
-        })
+        await Promise.all([
+          (async () => {
+            try {
+              const response = await fetch("/api/schedules", {
+                signal: controller.signal,
+              });
 
-        if (!response.ok) {
-          throw new Error('We could not load the schedule list.')
-        }
+              if (!response.ok) {
+                throw new Error("We could not load the schedule list.");
+              }
 
-        const payload = (await response.json()) as ScheduleSummary[]
-        setSchedules(payload)
-      } catch (loadError) {
-        if ((loadError as Error).name !== 'AbortError') {
-          setError((loadError as Error).message)
-        }
+              const payload = (await response.json()) as ScheduleSummary[];
+              setSchedules(payload);
+            } catch (loadError) {
+              if ((loadError as Error).name !== "AbortError") {
+                setError((loadError as Error).message);
+              }
+            }
+          })(),
+          (async () => {
+            try {
+              const response = await fetch(getActivityLogUrl(), {
+                signal: controller.signal,
+              });
+
+              if (!response.ok) {
+                throw new Error("We could not load the activity log.");
+              }
+
+              const payload = (await response.json()) as ActivityLogEntry[];
+              setActivityLogs(payload);
+            } catch (loadError) {
+              if ((loadError as Error).name !== "AbortError") {
+                setError((loadError as Error).message);
+              }
+            }
+          })(),
+        ]);
       } finally {
-        setLoadingSchedules(false)
+        setLoadingSchedules(false);
+        setLoadingActivityLogs(false);
       }
     }
 
-    void loadSchedules()
+    void loadInitialData();
 
-    return () => controller.abort()
-  }, [])
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
-    if (route.kind !== 'calendar') {
-      return
+    if (route.kind !== "calendar") {
+      return;
     }
 
-    const token = route.token
-    const controller = new AbortController()
+    const token = route.token;
+    const controller = new AbortController();
 
     async function loadScheduleDetail() {
-      setLoadingDetail(true)
-      setError(null)
+      setLoadingDetail(true);
+      setError(null);
 
       try {
         const response = await fetch(getScheduleDetailUrl(token), {
           signal: controller.signal,
-        })
+        });
 
         if (!response.ok) {
-          const payload = (await response.json().catch(() => null)) as
-            | { error?: string }
-            | null
-          throw new Error(
-            payload?.error ?? 'We could not load that schedule.',
-          )
+          const payload = (await response.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          throw new Error(payload?.error ?? "We could not load that schedule.");
         }
 
-        const payload = (await response.json()) as ScheduleDetail
-        setSelectedSchedule(payload)
-        setMonthCursor(startOfMonth(parseDateOnly(payload.startDate)))
+        const payload = (await response.json()) as ScheduleDetail;
+        setSelectedSchedule(payload);
+        setMonthCursor(startOfMonth(parseDateOnly(payload.startDate)));
       } catch (loadError) {
-        if ((loadError as Error).name !== 'AbortError') {
-          setError((loadError as Error).message)
-          setSelectedSchedule(null)
+        if ((loadError as Error).name !== "AbortError") {
+          setError((loadError as Error).message);
+          setSelectedSchedule(null);
         }
       } finally {
-        setLoadingDetail(false)
+        setLoadingDetail(false);
       }
     }
 
-    void loadScheduleDetail()
+    void loadScheduleDetail();
 
-    return () => controller.abort()
-  }, [route])
+    return () => controller.abort();
+  }, [route]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setSaving(true)
-    setError(null)
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
 
     try {
-      const response = await fetch('/api/schedules', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const isEditing = Boolean(editingScheduleToken);
+      const response = await fetch(
+        isEditing
+          ? getUpdateScheduleUrl(editingScheduleToken ?? "")
+          : "/api/schedules",
+        {
+          method: isEditing ? "PATCH" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            medicine: form.medicine.trim(),
+            durationDays: Number(form.durationDays),
+            timesPerDay: Number(form.timesPerDay),
+            startDate: form.startDate,
+          }),
         },
-        body: JSON.stringify({
-          medicine: form.medicine.trim(),
-          durationDays: Number(form.durationDays),
-          timesPerDay: Number(form.timesPerDay),
-          startDate: form.startDate,
-        }),
-      })
+      );
 
       if (!response.ok) {
-        const payload = (await response.json().catch(() => null)) as
-          | { error?: string }
-          | null
-        throw new Error(payload?.error ?? 'We could not save this schedule.')
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(payload?.error ?? "We could not save this schedule.");
       }
 
-      const payload = (await response.json()) as ScheduleDetail
+      const payload = (await response.json()) as ScheduleDetail;
       const nextSummary: ScheduleSummary = {
         id: payload.id,
         token: payload.token,
@@ -376,72 +517,102 @@ function App() {
         createdAt: payload.createdAt,
         totalIntakes: payload.totalIntakes,
         completedIntakes: payload.completedIntakes,
-      }
+      };
 
       setSchedules((current) => [
         nextSummary,
         ...current.filter((schedule) => schedule.token !== nextSummary.token),
-      ])
-      setForm(defaultForm)
+      ]);
+      setForm(defaultForm);
+      setEditingScheduleToken(null);
       setStatus(
-        `${nextSummary.medicine} was saved and added to the schedule list.`,
-      )
+        isEditing
+          ? `${nextSummary.medicine} was updated and saved.`
+          : `${nextSummary.medicine} was saved and added to the schedule list.`,
+      );
+      void loadSchedulesList();
+      void loadActivityLogs();
     } catch (submitError) {
-      setError((submitError as Error).message)
+      setError((submitError as Error).message);
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
   async function deleteSchedule(scheduleToken: string) {
     const confirmed = window.confirm(
-      'Delete this schedule? This will remove the schedule and all of its pill intakes.',
-    )
+      "Delete this schedule? This will remove the schedule and all of its pill intakes.",
+    );
 
     if (!confirmed) {
-      return
+      return;
     }
 
-    setError(null)
-    setStatus('Deleting schedule...')
+    setError(null);
+    setStatus("Deleting schedule...");
 
     try {
       const response = await fetch(getDeleteScheduleUrl(scheduleToken), {
-        method: 'DELETE',
-      })
+        method: "DELETE",
+      });
 
       if (!response.ok) {
-        throw new Error('We could not delete that schedule.')
+        throw new Error("We could not delete that schedule.");
       }
 
       setSchedules((current) =>
         current.filter((schedule) => schedule.token !== scheduleToken),
-      )
+      );
 
       if (selectedSchedule?.token === scheduleToken) {
-        setSelectedSchedule(null)
-        navigate('/')
+        setSelectedSchedule(null);
+        navigate("/");
       }
 
-      setStatus('Schedule deleted.')
+      if (editingScheduleToken === scheduleToken) {
+        setEditingScheduleToken(null);
+        setForm(defaultForm);
+      }
+
+      setStatus("Schedule deleted.");
+      void loadSchedulesList();
+      void loadActivityLogs();
     } catch (deleteError) {
-      setError((deleteError as Error).message)
+      setError((deleteError as Error).message);
     }
+  }
+
+  function beginEditingSchedule(schedule: ScheduleSummary) {
+    setForm({
+      medicine: schedule.medicine,
+      durationDays: String(schedule.durationDays),
+      timesPerDay: String(schedule.timesPerDay),
+      startDate: schedule.startDate,
+    });
+    setEditingScheduleToken(schedule.token);
+    setStatus(`Editing ${schedule.medicine}.`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function cancelEditingSchedule() {
+    setEditingScheduleToken(null);
+    setForm(defaultForm);
+    setStatus("Editing cancelled.");
   }
 
   async function toggleCompleted(intakeId: string, nextCompleted: boolean) {
     if (!selectedSchedule) {
-      return
+      return;
     }
 
-    const selectedToken = selectedSchedule.token
-    const previous = selectedSchedule
+    const selectedToken = selectedSchedule.token;
+    const previous = selectedSchedule;
     const targetIntake = selectedSchedule.intakes.find(
       (intake) => intake.id === intakeId,
-    )
-    const wasCompleted = Boolean(targetIntake?.completedAt)
+    );
+    const wasCompleted = Boolean(targetIntake?.completedAt);
 
-    setStatus('Saving completion state...')
+    setStatus("Saving completion state...");
 
     setSelectedSchedule({
       ...selectedSchedule,
@@ -453,26 +624,26 @@ function App() {
             }
           : intake,
       ),
-    })
+    });
 
     try {
       const response = await fetch(getUpdateIntakeUrl(intakeId), {
-        method: 'PATCH',
+        method: "PATCH",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           completed: nextCompleted,
         }),
-      })
+      });
 
       if (!response.ok) {
-        throw new Error('We could not update that intake.')
+        throw new Error("We could not update that intake.");
       }
 
       const payload = (await response.json()) as {
-        intake: { id: string; completedAt: string | null }
-      }
+        intake: { id: string; completedAt: string | null };
+      };
 
       setSelectedSchedule((current) =>
         current
@@ -488,7 +659,7 @@ function App() {
               ),
             }
           : current,
-      )
+      );
 
       if (nextCompleted !== wasCompleted) {
         setSchedules((current) =>
@@ -502,68 +673,76 @@ function App() {
                 }
               : schedule,
           ),
-        )
+        );
       }
 
       setStatus(
-        nextCompleted ? 'Intake marked complete.' : 'Intake marked as pending.',
-      )
+        nextCompleted ? "Intake marked complete." : "Intake marked as pending.",
+      );
+      void loadSchedulesList();
+      void loadActivityLogs();
     } catch (toggleError) {
-      setSelectedSchedule(previous)
-      setError((toggleError as Error).message)
+      setSelectedSchedule(previous);
+      setError((toggleError as Error).message);
     }
   }
 
   const completedCount =
-    selectedSchedule?.intakes.filter((intake) => intake.completedAt).length ?? 0
-  const totalCount = selectedSchedule?.intakes.length ?? 0
+    selectedSchedule?.intakes.filter((intake) => intake.completedAt).length ??
+    0;
+  const totalCount = selectedSchedule?.intakes.length ?? 0;
   const completionPercent =
-    totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
+    totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
   const calendarView =
-    selectedSchedule && route.kind === 'calendar'
+    selectedSchedule && route.kind === "calendar"
       ? buildCalendarCells(selectedSchedule, monthCursor)
-      : null
+      : null;
 
   return (
     <main className="app-shell">
       <div className="noise" aria-hidden="true" />
       <section className="panel">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Pill tracker</p>
-            <h1>Medication, without losing the list.</h1>
-          </div>
-          <p className="topbar-copy">
-            Add a schedule, keep the user on the same flow, and let the created
-            schedules stack up clearly in one place.
-          </p>
-        </header>
-
-        {route.kind === 'home' ? (
+        {route.kind === "home" ? (
           <>
+            <header className="topbar">
+              <div>
+                <p className="eyebrow">Pill tracker</p>
+                <h1>Medication, without losing the list.</h1>
+              </div>
+            </header>
             <div className="dashboard-grid">
-              <section className="intro-card">
-                <p className="section-label">Start here</p>
-                <h2>
-                  A large, simple form for the medicine the user needs to track.
-                </h2>
-                <p className="lead">
-                  Create a schedule, persist it in Neon, and keep the full list
-                  visible so the user can scan every pill plan they have made.
-                </p>
-                <div className="intake-notes">
+              <section className="activity-log-card">
+                <div className="section-heading">
                   <div>
-                    <span>Saved</span>
-                    <strong>Neon PostgreSQL</strong>
+                    <p className="section-label">User Activity Log</p>
                   </div>
-                  <div>
-                    <span>View</span>
-                    <strong>All schedules in one list</strong>
-                  </div>
-                  <div>
-                    <span>Details</span>
-                    <strong>Calendar opens on demand</strong>
-                  </div>
+                </div>
+
+                <div className="activity-log-list">
+                  {loadingActivityLogs ? (
+                    <div className="list-empty">
+                      <p>Loading activity history...</p>
+                    </div>
+                  ) : activityLogs.length === 0 ? (
+                    <div className="list-empty">
+                      <p>No activity yet. Create a schedule to start the log.</p>
+                    </div>
+                  ) : (
+                    activityLogs.map((entry) => (
+                      <article className="activity-log-item" key={entry.id}>
+                        <span className={`activity-log-badge ${entry.actionType}`}>
+                          {getActivityLabel(entry.actionType)}
+                        </span>
+                        <div className="activity-log-copy">
+                          <p>{entry.summary}</p>
+                          <span>
+                            {entry.medicine ?? "Pill schedule"} ·{" "}
+                            {formatActivityTimestamp(entry.createdAt)}
+                          </span>
+                        </div>
+                      </article>
+                    ))
+                  )}
                 </div>
               </section>
 
@@ -639,12 +818,27 @@ function App() {
                   </label>
 
                   <button type="submit" disabled={saving}>
-                    {saving ? 'Saving...' : 'Submit'}
+                    {saving
+                      ? "Saving..."
+                      : editingScheduleToken
+                        ? "Update schedule"
+                        : "Submit"}
                   </button>
 
+                  {editingScheduleToken ? (
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={cancelEditingSchedule}
+                    >
+                      Cancel edit
+                    </button>
+                  ) : null}
+
                   <p className="form-footer">
-                    Schedules appear immediately in the list below and stay
-                    saved for the next visit.
+                    {editingScheduleToken
+                      ? "You are editing an existing schedule. Saving will update the record and add a history entry."
+                      : "Schedules appear immediately in the list below and stay saved for the next visit."}
                   </p>
                 </form>
               </section>
@@ -658,8 +852,8 @@ function App() {
                 </div>
                 <p className="lead">
                   {schedules.length === 0
-                    ? 'No schedules yet. Add the first one above.'
-                    : `${schedules.length} schedule${schedules.length === 1 ? '' : 's'} saved.`}
+                    ? "No schedules yet. Add the first one above."
+                    : `${schedules.length} schedule${schedules.length === 1 ? "" : "s"} saved.`}
                 </p>
               </div>
 
@@ -673,15 +867,47 @@ function App() {
                 </div>
               ) : (
                 <div className="schedule-grid">
-                  {schedules.map((schedule) => (
+                  {schedules.map((schedule, index) => (
                     <article className="schedule-card" key={schedule.id}>
-                      <div className="schedule-card-top">
-                        <div>
-                          <p className="schedule-name">{schedule.medicine}</p>
+                      <div
+                        className={`schedule-card-banner tone-${(index % 5) + 1}`}
+                      >
+                        <div className="schedule-card-banner-overlay" />
+                        <div className="schedule-card-banner-copy">
+                          <span className="schedule-card-banner-kicker">
+                            Medication schedule
+                          </span>
+                          <h3>{schedule.medicine}</h3>
+                          <p>
+                            Starts {formatDateLabel(schedule.startDate)} ·{" "}
+                            {schedule.durationDays} days
+                          </p>
                         </div>
+                      </div>
+
+                      <div className="schedule-card-body">
+                        <dl className="schedule-meta-grid">
+                          <div>
+                            <dt>Duration</dt>
+                            <dd>{schedule.durationDays} days</dd>
+                          </div>
+                          <div>
+                            <dt>Per day</dt>
+                            <dd>{schedule.timesPerDay} times</dd>
+                          </div>
+                          <div>
+                            <dt>Start date</dt>
+                            <dd>{formatDateLabel(schedule.startDate)}</dd>
+                          </div>
+                          <div>
+                            <dt>Created</dt>
+                            <dd>{formatDateLabel(schedule.createdAt)}</dd>
+                          </div>
+                        </dl>
+
                         <div className="schedule-card-actions">
                           <button
-                            className="ghost-button"
+                            className="view-button"
                             type="button"
                             onClick={() =>
                               navigate(
@@ -689,7 +915,14 @@ function App() {
                               )
                             }
                           >
-                            Open calendar
+                            View more
+                          </button>
+                          <button
+                            className="ghost-button"
+                            type="button"
+                            onClick={() => beginEditingSchedule(schedule)}
+                          >
+                            Edit
                           </button>
                           <button
                             className="delete-button"
@@ -700,25 +933,6 @@ function App() {
                           </button>
                         </div>
                       </div>
-
-                      <dl className="schedule-meta-grid">
-                        <div>
-                          <dt>Duration</dt>
-                          <dd>{schedule.durationDays} days</dd>
-                        </div>
-                        <div>
-                          <dt>Per day</dt>
-                          <dd>{schedule.timesPerDay} times</dd>
-                        </div>
-                        <div>
-                          <dt>Start date</dt>
-                          <dd>{formatDateLabel(schedule.startDate)}</dd>
-                        </div>
-                        <div>
-                          <dt>Created</dt>
-                          <dd>{formatDateLabel(schedule.createdAt)}</dd>
-                        </div>
-                      </dl>
                     </article>
                   ))}
                 </div>
@@ -726,176 +940,252 @@ function App() {
             </section>
           </>
         ) : (
-          <section className="calendar-page">
-            <div className="calendar-toolbar">
-              <button
-                className="back-link"
-                type="button"
-                onClick={() => navigate('/')}
-              >
-                Back to Homepage
-              </button>
-
-              <div className="calendar-title-block">
-                <p className="section-label">Calendar page</p>
-                <h2>{selectedSchedule?.medicine ?? 'Schedule calendar'}</h2>
-                <p className="lead">
-                  {selectedSchedule
-                    ? `${selectedSchedule.durationDays} day plan, ${selectedSchedule.timesPerDay} doses per day, starting ${formatDateLabel(selectedSchedule.startDate)}.`
-                    : 'Loading the schedule calendar.'}
-                </p>
+          <>
+            <button
+              className="back-link"
+              type="button"
+              onClick={() => navigate("/")}
+            >
+              Back to Homepage
+            </button>
+            <header className="topbar">
+              <div>
+                {loadingDetail ? (
+                  <div className="skeleton-line skeleton-headline" aria-hidden="true" />
+                ) : (
+                  <h1>{selectedSchedule?.medicine ?? "Schedule calendar"}</h1>
+                )}
               </div>
-
-              <div className="calendar-header-actions">
-                <div className="month-nav">
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() =>
-                      setMonthCursor(
-                        (current) =>
-                          new Date(current.getFullYear(), current.getMonth() - 1, 1),
-                      )
-                    }
-                  >
-                    Previous
-                  </button>
-                  <strong>{calendarView?.monthLabel ?? 'Month'}</strong>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    onClick={() =>
-                      setMonthCursor(
-                        (current) =>
-                          new Date(current.getFullYear(), current.getMonth() + 1, 1),
-                      )
-                    }
-                  >
-                    Next
-                  </button>
-                </div>
-
-                <div className="calendar-summary">
-                  <strong>{completionPercent}%</strong>
-                  <span>
-                    {completedCount} of {totalCount} intakes completed
-                  </span>
-                  <div className="progress-track" aria-hidden="true">
-                    <div
-                      className="progress-fill"
-                      style={{ width: `${completionPercent}%` }}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {loadingDetail ? (
-              <div className="list-empty">Loading schedule...</div>
-            ) : selectedSchedule && calendarView ? (
-              <>
-                <div className="calendar-surface">
-                  <div className="calendar-weekdays" aria-hidden="true">
-                    {weekdayLabels.map((label) => (
-                      <div key={label}>{label}</div>
-                    ))}
+            </header>
+            <section className="calendar-page">
+              <div className="calendar-toolbar">
+                <div className="calendar-header-actions">
+                  <div className="month-nav">
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() =>
+                        setMonthCursor(
+                          (current) =>
+                            new Date(
+                              current.getFullYear(),
+                              current.getMonth() - 1,
+                              1,
+                            ),
+                        )
+                      }
+                    >
+                      Previous
+                    </button>
+                    <strong>{calendarView?.monthLabel ?? "Month"}</strong>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={() =>
+                        setMonthCursor(
+                          (current) =>
+                            new Date(
+                              current.getFullYear(),
+                              current.getMonth() + 1,
+                              1,
+                            ),
+                        )
+                      }
+                    >
+                      Next
+                    </button>
                   </div>
 
-                  <div className="calendar-scroll">
-                    <div className="calendar-weeks">
-                      {calendarView.weeks.map((week, weekIndex) => (
-                        <div className="calendar-week" key={`${weekIndex}`}>
-                          {week.map((cell) => (
-                            <article
-                              key={cell.dateKey}
-                              className={[
-                                'calendar-cell',
-                                cell.isCurrentMonth ? 'current' : 'outside',
-                                cell.isInSchedule ? 'in-schedule' : '',
-                                cell.isToday ? 'today' : '',
-                              ]
-                                .filter(Boolean)
-                                .join(' ')}
-                            >
-                              <header className="calendar-day-head">
-                                <span className="calendar-day-number">
-                                  {cell.dayNumber}
-                                </span>
-                                <span className="calendar-day-weekday">
-                                  {weekdayLabels[new Date(`${cell.dateKey}T12:00:00`).getDay()]}
-                                </span>
-                              </header>
-
-                              <div className="calendar-day-intakes">
-                              {cell.items.length === 0 ? (
-                                <span className="calendar-empty">No doses</span>
-                              ) : (
-                                cell.items.map((intake) => {
-                                  const completed = Boolean(intake.completedAt)
-                                  const blocked = !completed && isCompletionBlocked(intake)
-
-                                  return (
-                                    <div key={intake.id} className="intake-item">
-                                      <button
-                                        className={`intake-chip ${completed ? 'completed' : ''} ${blocked ? 'blocked' : ''}`}
-                                        type="button"
-                                        aria-pressed={completed}
-                                        disabled={blocked}
-                                        onClick={() =>
-                                          void toggleCompleted(
-                                            intake.id,
-                                            !completed,
-                                          )
-                                          }
-                                        >
-                                          <span
-                                            className={`intake-check ${completed ? 'checked' : ''}`}
-                                            aria-hidden="true"
-                                          >
-                                            {completed ? '✓' : '○'}
-                                          </span>
-                                          <span className="intake-chip-body">
-                                            <span className="intake-chip-time">
-                                              {formatClockLabel(intake.scheduledAt)}
-                                            </span>
-                                            <span className="intake-chip-label">
-                                              {intake.doseLabel}
-                                            </span>
-                                          </span>
-                                        </button>
-
-                                        {completed && intake.completedAt ? (
-                                          <p className="completed-stamp">
-                                            Completed{' '}
-                                            {formatCompletedTimestamp(
-                                              intake.completedAt,
-                                            )}
-                                          </p>
-                                        ) : null}
-                                      </div>
-                                    )
-                                  })
-                                )}
-                              </div>
-                            </article>
-                          ))}
+                  <div className="calendar-summary">
+                    {loadingDetail ? (
+                      <>
+                        <span
+                          className="skeleton-line skeleton-summary-value"
+                          aria-hidden="true"
+                        />
+                        <span
+                          className="skeleton-line skeleton-summary-copy"
+                          aria-hidden="true"
+                        />
+                        <span
+                          className="skeleton-line skeleton-progress"
+                          aria-hidden="true"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <strong>{completionPercent}%</strong>
+                        <span>
+                          {completedCount} of {totalCount} intakes completed
+                        </span>
+                        <div className="progress-track" aria-hidden="true">
+                          <div
+                            className="progress-fill"
+                            style={{ width: `${completionPercent}%` }}
+                          />
                         </div>
-                  ))}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {loadingDetail ? (
+                <div className="calendar-skeleton" aria-hidden="true">
+                  <div className="calendar-skeleton-surface">
+                    <div className="calendar-skeleton-weekdays">
+                      {weekdayLabels.map((label) => (
+                        <div className="skeleton-line skeleton-weekday" key={label} />
+                      ))}
+                    </div>
+
+                    <div className="calendar-scroll">
+                      <div className="calendar-weeks">
+                        {Array.from({ length: 5 }, (_, weekIndex) => (
+                          <div className="calendar-week" key={`skeleton-week-${weekIndex}`}>
+                            {Array.from({ length: 7 }, (_, dayIndex) => (
+                              <article
+                                className="calendar-cell calendar-skeleton-cell"
+                                key={`skeleton-cell-${weekIndex}-${dayIndex}`}
+                              >
+                                <header className="calendar-day-head">
+                                  <span className="skeleton-line skeleton-day-number" />
+                                  <span className="skeleton-line skeleton-day-weekday" />
+                                </header>
+                                <div className="calendar-day-intakes">
+                                  <span className="skeleton-pill" />
+                                  <span className="skeleton-pill" />
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
+              ) : selectedSchedule && calendarView ? (
+                <>
+                  <div className="calendar-surface">
+                    <div className="calendar-weekdays" aria-hidden="true">
+                      {weekdayLabels.map((label) => (
+                        <div key={label}>{label}</div>
+                      ))}
+                    </div>
 
-                <p className="calendar-note">
-                  Click the check control on any pill chip to mark it complete
-                  or uncheck it later.
-                </p>
-              </>
-            ) : (
-              <div className="list-empty">
-                <p>{error ?? 'We could not load that schedule.'}</p>
-              </div>
-            )}
-          </section>
+                    <div className="calendar-scroll">
+                      <div className="calendar-weeks">
+                        {calendarView.weeks.map((week, weekIndex) => (
+                          <div className="calendar-week" key={`${weekIndex}`}>
+                            {week.map((cell) => (
+                              <article
+                                key={cell.dateKey}
+                                className={[
+                                  "calendar-cell",
+                                  cell.isCurrentMonth ? "current" : "outside",
+                                  cell.isInSchedule ? "in-schedule" : "",
+                                  cell.isToday ? "today" : "",
+                                ]
+                                  .filter(Boolean)
+                                  .join(" ")}
+                              >
+                                <header className="calendar-day-head">
+                                  <span className="calendar-day-number">
+                                    {cell.dayNumber}
+                                  </span>
+                                  <span className="calendar-day-weekday">
+                                    {
+                                      weekdayLabels[
+                                        new Date(
+                                          `${cell.dateKey}T12:00:00`,
+                                        ).getDay()
+                                      ]
+                                    }
+                                  </span>
+                                </header>
+
+                                <div className="calendar-day-intakes">
+                                  {cell.items.length === 0 ? (
+                                    <span className="calendar-empty">
+                                      No doses
+                                    </span>
+                                  ) : (
+                                    cell.items.map((intake) => {
+                                      const completed = Boolean(
+                                        intake.completedAt,
+                                      );
+                                      const blocked =
+                                        !completed &&
+                                        isCompletionBlocked(intake);
+
+                                      return (
+                                        <div
+                                          key={intake.id}
+                                          className="intake-item"
+                                        >
+                                          <button
+                                            className={`intake-chip ${completed ? "completed" : ""} ${blocked ? "blocked" : ""}`}
+                                            type="button"
+                                            aria-pressed={completed}
+                                            disabled={blocked}
+                                            onClick={() =>
+                                              void toggleCompleted(
+                                                intake.id,
+                                                !completed,
+                                              )
+                                            }
+                                          >
+                                            <span
+                                              className={`intake-check ${completed ? "checked" : ""}`}
+                                              aria-hidden="true"
+                                            >
+                                              {completed ? "✓" : "○"}
+                                            </span>
+                                            <span className="intake-chip-body">
+                                              <span className="intake-chip-time">
+                                                {formatClockLabel(
+                                                  intake.scheduledAt,
+                                                )}
+                                              </span>
+                                              <span className="intake-chip-label">
+                                                {intake.doseLabel}
+                                              </span>
+                                            </span>
+                                          </button>
+
+                                          {completed && intake.completedAt ? (
+                                            <p className="completed-stamp">
+                                              Completed{" "}
+                                              {formatCompletedTimestamp(
+                                                intake.completedAt,
+                                              )}
+                                            </p>
+                                          ) : null}
+                                        </div>
+                                      );
+                                    })
+                                  )}
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="calendar-note">
+                    Click the check control on any pill chip to mark it complete
+                    or uncheck it later.
+                  </p>
+                </>
+              ) : (
+                <div className="list-empty">
+                  <p>{error ?? "We could not load that schedule."}</p>
+                </div>
+              )}
+            </section>
+          </>
         )}
 
         <footer className="status-bar" aria-live="polite">
@@ -904,7 +1194,7 @@ function App() {
         </footer>
       </section>
     </main>
-  )
+  );
 }
 
-export default App
+export default App;

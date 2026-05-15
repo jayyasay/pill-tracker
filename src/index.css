@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500&display=swap');
 
 :root {
   --ink: #0f2638;
@@ -12,7 +12,7 @@
   --accent-5: #e1f5fe;
   --line: rgba(41, 182, 246, 0.18);
   --line-strong: rgba(41, 182, 246, 0.3);
-  --mono: 'SFMono-Regular', ui-monospace, Menlo, Monaco, Consolas, monospace;
+  --mono: 'IBM Plex Mono', ui-monospace, 'Courier New', monospace;
   --heading: 'Nexa', 'Roboto', 'Avenir Next', 'Segoe UI', sans-serif;
   --body: 'Roboto', 'Segoe UI', system-ui, sans-serif;
 
@@ -20,11 +20,7 @@
   line-height: 1.5;
   font-weight: 400;
   color: var(--ink);
-  background:
-    radial-gradient(circle at top left, rgba(41, 182, 246, 0.26), transparent 24%),
-    radial-gradient(circle at 84% 14%, rgba(129, 212, 250, 0.34), transparent 22%),
-    radial-gradient(circle at 50% 100%, rgba(225, 245, 254, 0.9), transparent 40%),
-    linear-gradient(180deg, #f8fcff 0%, #eaf7ff 100%);
+  background: var(--accent-5);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
