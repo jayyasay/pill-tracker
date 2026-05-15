@@ -21,6 +21,12 @@ const pool = new Pool({
 
 const app = express()
 app.use(express.json())
+const api = express.Router()
+app.use('/api', api)
+
+if (process.env.VERCEL) {
+  app.use(api)
+}
 
 let databaseReady = false
 let databaseError = null
@@ -154,7 +160,7 @@ function formatScheduleSummary(row) {
   }
 }
 
-app.get('/api/health', async (_request, response) => {
+api.get('/health', async (_request, response) => {
   response.json({
     ok: databaseReady,
     databaseReady,
@@ -162,7 +168,7 @@ app.get('/api/health', async (_request, response) => {
   })
 })
 
-app.get('/api/schedules/:token', async (request, response) => {
+api.get('/schedules/:token', async (request, response) => {
   if (!databaseReady) {
     unavailableResponse(response)
     return
@@ -188,7 +194,7 @@ app.get('/api/schedules/:token', async (request, response) => {
   response.json(formatSchedule(scheduleResult.rows[0], intakesResult.rows))
 })
 
-app.get('/api/schedules', async (_request, response) => {
+api.get('/schedules', async (_request, response) => {
   if (!databaseReady) {
     unavailableResponse(response)
     return
@@ -208,7 +214,7 @@ app.get('/api/schedules', async (_request, response) => {
   response.json(result.rows.map(formatScheduleSummary))
 })
 
-app.post('/api/schedules', async (request, response) => {
+api.post('/schedules', async (request, response) => {
   if (!databaseReady) {
     unavailableResponse(response)
     return
@@ -292,7 +298,7 @@ app.post('/api/schedules', async (request, response) => {
   }
 })
 
-app.patch('/api/intakes/:id', async (request, response) => {
+api.patch('/intakes/:id', async (request, response) => {
   if (!databaseReady) {
     unavailableResponse(response)
     return
@@ -350,7 +356,7 @@ app.patch('/api/intakes/:id', async (request, response) => {
   })
 })
 
-app.delete('/api/schedules/:token', async (request, response) => {
+api.delete('/schedules/:token', async (request, response) => {
   if (!databaseReady) {
     unavailableResponse(response)
     return
