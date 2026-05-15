@@ -18,6 +18,7 @@ A simple pill tracker app with a large intake form, a generated calendar view, a
 ## Scripts
 
 - `npm run dev` starts the Express API on port `3001` and the Vite frontend together.
+  The frontend calls the API directly in development, so there is no Vite proxy layer to debug.
 - `npm run server` starts only the backend.
 - `npm run build` creates the production frontend bundle.
 - `npm run lint` runs ESLint.
