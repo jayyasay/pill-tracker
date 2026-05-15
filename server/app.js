@@ -168,6 +168,48 @@ api.get('/health', async (_request, response) => {
   })
 })
 
+api.get('/schedules', async (request, response) => {
+  if (!databaseReady) {
+    unavailableResponse(response)
+    return
+  }
+
+  const token = String(request.query?.token ?? '').trim()
+
+  if (token) {
+    const scheduleResult = await pool.query(
+      'SELECT * FROM schedules WHERE token = $1 LIMIT 1',
+      [token],
+    )
+
+    if (scheduleResult.rowCount === 0) {
+      response.status(404).json({ error: 'Schedule not found.' })
+      return
+    }
+
+    const intakesResult = await pool.query(
+      'SELECT * FROM schedule_intakes WHERE schedule_id = $1 ORDER BY scheduled_at ASC',
+      [scheduleResult.rows[0].id],
+    )
+
+    response.json(formatSchedule(scheduleResult.rows[0], intakesResult.rows))
+    return
+  }
+
+  const result = await pool.query(`
+    SELECT
+      s.*,
+      COUNT(si.id) AS total_intakes,
+      COUNT(si.completed_at) AS completed_intakes
+    FROM schedules s
+    LEFT JOIN schedule_intakes si ON si.schedule_id = s.id
+    GROUP BY s.id
+    ORDER BY s.created_at DESC
+  `)
+
+  response.json(result.rows.map(formatScheduleSummary))
+})
+
 api.get('/schedules/:token', async (request, response) => {
   if (!databaseReady) {
     unavailableResponse(response)
@@ -192,26 +234,6 @@ api.get('/schedules/:token', async (request, response) => {
   )
 
   response.json(formatSchedule(scheduleResult.rows[0], intakesResult.rows))
-})
-
-api.get('/schedules', async (_request, response) => {
-  if (!databaseReady) {
-    unavailableResponse(response)
-    return
-  }
-
-  const result = await pool.query(`
-    SELECT
-      s.*,
-      COUNT(si.id) AS total_intakes,
-      COUNT(si.completed_at) AS completed_intakes
-    FROM schedules s
-    LEFT JOIN schedule_intakes si ON si.schedule_id = s.id
-    GROUP BY s.id
-    ORDER BY s.created_at DESC
-  `)
-
-  response.json(result.rows.map(formatScheduleSummary))
 })
 
 api.post('/schedules', async (request, response) => {
@@ -356,6 +378,69 @@ api.patch('/intakes/:id', async (request, response) => {
   })
 })
 
+api.patch('/intakes', async (request, response) => {
+  if (!databaseReady) {
+    unavailableResponse(response)
+    return
+  }
+
+  const id = String(request.query?.id ?? '').trim()
+  const completed = Boolean(request.body?.completed)
+
+  if (!id) {
+    response.status(400).json({ error: 'Intake id is required.' })
+    return
+  }
+
+  if (completed) {
+    const intakeResult = await pool.query(
+      'SELECT scheduled_at, completed_at FROM schedule_intakes WHERE id = $1 LIMIT 1',
+      [id],
+    )
+
+    if (intakeResult.rowCount === 0) {
+      response.status(404).json({ error: 'Intake not found.' })
+      return
+    }
+
+    const scheduledAt = new Date(intakeResult.rows[0].scheduled_at)
+    const cutoff = new Date()
+    cutoff.setHours(0, 0, 0, 0)
+    cutoff.setDate(cutoff.getDate() + 5)
+
+    if (scheduledAt >= cutoff) {
+      response.status(403).json({
+        error:
+          'This intake is too far in the future to mark complete yet.',
+      })
+      return
+    }
+  }
+
+  const completedExpression = completed ? 'CURRENT_TIMESTAMP' : 'NULL'
+
+  const result = await pool.query(
+    `UPDATE schedule_intakes
+     SET completed_at = ${completedExpression}
+     WHERE id = $1
+     RETURNING *`,
+    [id],
+  )
+
+  if (result.rowCount === 0) {
+    response.status(404).json({ error: 'Intake not found.' })
+    return
+  }
+
+  response.json({
+    intake: {
+      id: result.rows[0].id,
+      completedAt: result.rows[0].completed_at,
+      scheduledAt: result.rows[0].scheduled_at,
+    },
+  })
+})
+
 api.delete('/schedules/:token', async (request, response) => {
   if (!databaseReady) {
     unavailableResponse(response)
@@ -370,6 +455,27 @@ api.delete('/schedules/:token', async (request, response) => {
   )
 
   // Keep DELETE idempotent so repeated deletes do not surface as client errors.
+  response.status(204).send()
+})
+
+api.delete('/schedules', async (request, response) => {
+  if (!databaseReady) {
+    unavailableResponse(response)
+    return
+  }
+
+  const token = String(request.query?.token ?? '').trim()
+
+  if (!token) {
+    response.status(400).json({ error: 'Schedule token is required.' })
+    return
+  }
+
+  await pool.query(
+    'DELETE FROM schedules WHERE token = $1 OR id::text = $1 RETURNING id',
+    [token],
+  )
+
   response.status(204).send()
 })
 

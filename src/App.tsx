@@ -201,6 +201,30 @@ function isCompletionBlocked(intake: ScheduleIntake) {
   return parseDateOnly(intake.scheduledAt) >= cutoff
 }
 
+function getScheduleDetailUrl(token: string) {
+  if (import.meta.env.DEV) {
+    return `/api/schedules/${encodeURIComponent(token)}`
+  }
+
+  return `/api/schedules?token=${encodeURIComponent(token)}`
+}
+
+function getDeleteScheduleUrl(token: string) {
+  if (import.meta.env.DEV) {
+    return `/api/schedules/${encodeURIComponent(token)}`
+  }
+
+  return `/api/schedules?token=${encodeURIComponent(token)}`
+}
+
+function getUpdateIntakeUrl(intakeId: string) {
+  if (import.meta.env.DEV) {
+    return `/api/intakes/${encodeURIComponent(intakeId)}`
+  }
+
+  return `/api/intakes?id=${encodeURIComponent(intakeId)}`
+}
+
 function App() {
   const [form, setForm] = useState<ScheduleFormState>(defaultForm)
   const [schedules, setSchedules] = useState<ScheduleSummary[]>([])
@@ -284,7 +308,7 @@ function App() {
       setError(null)
 
       try {
-        const response = await fetch(`/api/schedules/${token}`, {
+        const response = await fetch(getScheduleDetailUrl(token), {
           signal: controller.signal,
         })
 
@@ -382,12 +406,9 @@ function App() {
     setStatus('Deleting schedule...')
 
     try {
-      const response = await fetch(
-        `/api/schedules/${encodeURIComponent(scheduleToken)}`,
-        {
+      const response = await fetch(getDeleteScheduleUrl(scheduleToken), {
         method: 'DELETE',
-        },
-      )
+      })
 
       if (!response.ok) {
         throw new Error('We could not delete that schedule.')
@@ -435,7 +456,7 @@ function App() {
     })
 
     try {
-      const response = await fetch(`/api/intakes/${intakeId}`, {
+      const response = await fetch(getUpdateIntakeUrl(intakeId), {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
