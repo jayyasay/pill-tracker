@@ -1,16 +1,27 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import Avatar from "@mui/material/Avatar";
+import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import "./App.css";
 
-type Route = { kind: "home" } | { kind: "calendar"; token: string };
+type Route =
+  | { kind: "home" }
+  | { kind: "family" }
+  | { kind: "calendar"; token: string };
 
 type ScheduleIntake = {
   id: string;
+  cycleDayLabel: string;
   dayLabel: string;
+  doseIndex: number;
+  doseTime: string;
   doseLabel: string;
   scheduledAt: string;
   completedAt: string | null;
   status: "pending" | "completed" | "missed";
   missedAt: string | null;
+  isOvernight: boolean;
 };
 
 type ScheduleSummary = {
@@ -37,6 +48,7 @@ type ActivityLogEntry = {
   id: string;
   actionType: string;
   summary: string;
+  familyMemberId: string | null;
   scheduleToken: string | null;
   medicine: string | null;
   details: Record<string, unknown>;
@@ -55,6 +67,7 @@ type FamilyMember = {
   name: string;
   birthdate: string;
   gender: "male" | "female";
+  avatarDataUrl: string | null;
   createdAt: string;
 };
 
@@ -72,6 +85,7 @@ type FamilyFormState = {
   name: string;
   birthdate: string;
   gender: "male" | "female";
+  avatarDataUrl: string | null;
 };
 
 type CalendarCell = {
@@ -97,6 +111,7 @@ const defaultFamilyForm: FamilyFormState = {
   name: "",
   birthdate: "",
   gender: "male",
+  avatarDataUrl: null,
 };
 
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -150,14 +165,11 @@ function formatDateLabel(dateValue: string) {
   }).format(date);
 }
 
-function formatClockLabel(isoValue: string) {
-  return new Intl.DateTimeFormat("en", {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(isoValue));
-}
+function formatTimeInputLabel(timeValue?: string | null) {
+  if (!timeValue) {
+    return "";
+  }
 
-function formatTimeInputLabel(timeValue: string) {
   const [hours, minutes] = timeValue.split(":").map((part) => Number(part));
 
   if (!Number.isInteger(hours) || !Number.isInteger(minutes)) {
@@ -169,6 +181,20 @@ function formatTimeInputLabel(timeValue: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(date);
+}
+
+function parseTimeInputToMinutes(timeValue?: string | null) {
+  if (!timeValue) {
+    return null;
+  }
+
+  const [hours, minutes] = timeValue.split(":").map((part) => Number(part));
+
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) {
+    return null;
+  }
+
+  return ((hours % 24) * 60 + minutes) % 1440;
 }
 
 function getPrescribedDoseTimes(timesPerDay: number, startTime: string) {
@@ -268,9 +294,63 @@ function getInitials(name: string) {
     .join("");
 }
 
+function readImageFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      const result = String(reader.result ?? "");
+      resolve(result);
+    };
+
+    reader.onerror = () => {
+      reject(new Error("We could not read that image."));
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
+async function readAvatarThumbnailAsDataUrl(file: File) {
+  const sourceDataUrl = await readImageFileAsDataUrl(file);
+
+  if (typeof window === "undefined") {
+    return sourceDataUrl;
+  }
+
+  const image = new Image();
+  image.src = sourceDataUrl;
+  await image.decode().catch(() => null);
+
+  const maxSide = 320;
+  const scale = Math.min(1, maxSide / Math.max(image.width || maxSide, image.height || maxSide));
+  const width = Math.max(1, Math.round((image.width || maxSide) * scale));
+  const height = Math.max(1, Math.round((image.height || maxSide) * scale));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    return sourceDataUrl;
+  }
+
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+
+  return canvas.toDataURL("image/jpeg", 0.85);
+}
+
 function getRouteFromLocation(): Route {
   if (typeof window === "undefined") {
     return { kind: "home" };
+  }
+
+  if (window.location.pathname === "/family") {
+    return { kind: "family" };
   }
 
   const match = window.location.pathname.match(/^\/calendar\/([^/]+)$/);
@@ -292,9 +372,9 @@ function buildCalendarCells(schedule: ScheduleDetail, monthCursor: Date) {
   const intakeMap = new Map<string, ScheduleIntake[]>();
 
   for (const intake of schedule.intakes) {
-    const items = intakeMap.get(intake.dayLabel) ?? [];
+    const items = intakeMap.get(intake.cycleDayLabel ?? intake.dayLabel) ?? [];
     items.push(intake);
-    intakeMap.set(intake.dayLabel, items);
+    intakeMap.set(intake.cycleDayLabel ?? intake.dayLabel, items);
   }
 
   const weeks: CalendarCell[][] = [];
@@ -339,10 +419,6 @@ function isMissedDose(schedule: ScheduleSummary | ScheduleDetail, intake: Schedu
     return false;
   }
 
-  if (intake.status === "missed") {
-    return true;
-  }
-
   if (schedule.scheduleType === "supplement") {
     return dateKey(parseDateOnly(intake.scheduledAt)) < dateKey(new Date());
   }
@@ -355,9 +431,30 @@ function getIntakeTimeLabel(
   schedule: ScheduleSummary | ScheduleDetail,
   intake: ScheduleIntake,
 ) {
-  return schedule.scheduleType === "supplement"
-    ? "Anytime today"
-    : formatClockLabel(intake.scheduledAt);
+  if (schedule.scheduleType === "supplement") {
+    return "Anytime today";
+  }
+
+  const doseTimes = getPrescribedDoseTimes(
+    schedule.timesPerDay,
+    schedule.startTime ?? "08:00",
+  );
+  const doseTime = intake.doseTime ?? doseTimes[intake.doseIndex] ?? schedule.startTime;
+  const label = formatTimeInputLabel(doseTime) || "08:00 AM";
+  const startMinutes = parseTimeInputToMinutes(schedule.startTime ?? "08:00");
+  const doseMinutes = parseTimeInputToMinutes(doseTime);
+
+  if (
+    intake.isOvernight ||
+    (startMinutes !== null &&
+      doseMinutes !== null &&
+      intake.doseIndex > 0 &&
+      doseMinutes < startMinutes)
+  ) {
+    return `${label} next day`;
+  }
+
+  return label;
 }
 
 function getScheduleDetailUrl(token: string) {
@@ -384,6 +481,14 @@ function getFamilyMembersUrl() {
   return apiUrl("/api/family-members");
 }
 
+function getFamilyMemberUpdateUrl(id: string) {
+  return apiUrl(`/api/family-members/${encodeURIComponent(id)}`);
+}
+
+function getFamilyMemberDeleteUrl(id: string) {
+  return apiUrl(`/api/family-members/${encodeURIComponent(id)}`);
+}
+
 function apiUrl(path: string) {
   return import.meta.env.DEV ? `http://localhost:3001${path}` : path;
 }
@@ -397,6 +502,9 @@ function App() {
   const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([]);
   const [activityLogPage, setActivityLogPage] = useState(0);
   const [activityLogTotalCount, setActivityLogTotalCount] = useState(0);
+  const [selectedFamilyMemberId, setSelectedFamilyMemberId] = useState<
+    string | null
+  >(null);
   const [selectedSchedule, setSelectedSchedule] =
     useState<ScheduleDetail | null>(null);
   const [route, setRoute] = useState<Route>(() => getRouteFromLocation());
@@ -411,7 +519,11 @@ function App() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savingFamilyMember, setSavingFamilyMember] = useState(false);
+  const [isFamilyDrawerOpen, setIsFamilyDrawerOpen] = useState(false);
   const [editingScheduleToken, setEditingScheduleToken] = useState<
+    string | null
+  >(null);
+  const [editingFamilyMemberId, setEditingFamilyMemberId] = useState<
     string | null
   >(null);
   const [error, setError] = useState<string | null>(null);
@@ -423,11 +535,70 @@ function App() {
     }
     setRoute(getRouteFromLocation());
     setIsMedicationModalOpen(false);
+    setIsFamilyDrawerOpen(false);
     if (path === "/") {
       setSelectedSchedule(null);
       setEditingScheduleToken(null);
+      setEditingFamilyMemberId(null);
       setError(null);
       setStatus("Ready to build your regimen.");
+    } else if (path === "/family") {
+      setSelectedSchedule(null);
+      setEditingScheduleToken(null);
+      setEditingFamilyMemberId(null);
+      setError(null);
+      setStatus("Viewing family members.");
+    }
+  }
+
+  function openFamilyDrawer(member?: FamilyMember | null) {
+    if (member) {
+      setEditingFamilyMemberId(member.id);
+      setFamilyForm({
+        name: member.name,
+        birthdate: member.birthdate,
+        gender: member.gender,
+        avatarDataUrl: member.avatarDataUrl,
+      });
+    } else {
+      setEditingFamilyMemberId(null);
+      setFamilyForm(defaultFamilyForm);
+    }
+
+    setIsFamilyDrawerOpen(true);
+  }
+
+  function closeFamilyDrawer() {
+    setIsFamilyDrawerOpen(false);
+    setEditingFamilyMemberId(null);
+    setFamilyForm(defaultFamilyForm);
+  }
+
+  function selectFamilyMember(memberId: string | null) {
+    setSelectedFamilyMemberId(memberId);
+    setActivityLogPage(0);
+    void loadActivityLogsPage(0, undefined, false, memberId);
+  }
+
+  async function handleFamilyAvatarUpload(
+    event: ChangeEvent<HTMLInputElement>,
+  ) {
+    const file = event.target.files?.[0] ?? null;
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      const avatarDataUrl = await readAvatarThumbnailAsDataUrl(file);
+      setFamilyForm((current) => ({
+        ...current,
+        avatarDataUrl,
+      }));
+    } catch (uploadError) {
+      setError((uploadError as Error).message);
+    } finally {
+      event.target.value = "";
     }
   }
 
@@ -462,6 +633,7 @@ function App() {
     page: number,
     signal?: AbortSignal,
     showLoading = false,
+    familyMemberId: string | null = selectedFamilyMemberId,
   ) {
     if (showLoading) {
       setLoadingActivityLogs(true);
@@ -474,6 +646,10 @@ function App() {
         limit: String(activityLogPageSize),
         offset: String(page * activityLogPageSize),
       });
+
+      if (familyMemberId) {
+        params.set("familyMemberId", familyMemberId);
+      }
 
       const response = await fetch(
         `${getActivityLogUrl()}?${params.toString()}`,
@@ -512,6 +688,8 @@ function App() {
     document.title =
       route.kind === "calendar"
         ? `Calendar · ${selectedSchedule?.medicine ?? "Pill Track"}`
+        : route.kind === "family"
+          ? "Family Members · Pill Track"
         : "Pill Track";
   }, [route, selectedSchedule]);
 
@@ -521,12 +699,14 @@ function App() {
     }
 
     document.body.style.overflow =
-      isMedicationModalOpen && route.kind === "home" ? "hidden" : "";
+      (isMedicationModalOpen && route.kind === "home") || isFamilyDrawerOpen
+        ? "hidden"
+        : "";
 
     return () => {
       document.body.style.overflow = "";
     };
-  }, [isMedicationModalOpen, route.kind]);
+  }, [isMedicationModalOpen, isFamilyDrawerOpen, route.kind]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -558,7 +738,31 @@ function App() {
             }
           })(),
           (async () => {
-            await loadActivityLogsPage(0, controller.signal, true);
+            try {
+              const params = new URLSearchParams({
+                limit: String(activityLogPageSize),
+                offset: "0",
+              });
+
+              const response = await fetch(
+                `${getActivityLogUrl()}?${params.toString()}`,
+                {
+                  signal: controller.signal,
+                },
+              );
+
+              if (!response.ok) {
+                throw new Error("We could not load the activity log.");
+              }
+
+              const payload = (await response.json()) as ActivityLogResponse;
+              setActivityLogs(payload.items);
+              setActivityLogTotalCount(payload.totalCount);
+            } catch (loadError) {
+              if ((loadError as Error).name !== "AbortError") {
+                setError((loadError as Error).message);
+              }
+            }
           })(),
           (async () => {
             await loadFamilyMembers(controller.signal, true);
@@ -646,6 +850,7 @@ function App() {
             startTime:
               form.scheduleType === "prescribed" ? form.startTime : null,
             startDate: form.startDate,
+            timezoneOffsetMinutes: new Date().getTimezoneOffset(),
           }),
         },
       );
@@ -687,7 +892,7 @@ function App() {
           : `${nextSummary.medicine} was saved and added to the schedule list.`,
       );
       setActivityLogPage(0);
-      void loadActivityLogsPage(0);
+      void loadActivityLogsPage(0, undefined, false, selectedFamilyMemberId);
     } catch (submitError) {
       setError((submitError as Error).message);
     } finally {
@@ -701,17 +906,24 @@ function App() {
     setError(null);
 
     try {
-      const response = await fetch(getFamilyMembersUrl(), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      const isEditing = Boolean(editingFamilyMemberId);
+      const response = await fetch(
+        isEditing
+          ? getFamilyMemberUpdateUrl(editingFamilyMemberId ?? "")
+          : getFamilyMembersUrl(),
+        {
+          method: isEditing ? "PATCH" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: familyForm.name.trim(),
+            birthdate: familyForm.birthdate,
+            gender: familyForm.gender,
+            avatarDataUrl: familyForm.avatarDataUrl,
+          }),
         },
-        body: JSON.stringify({
-          name: familyForm.name.trim(),
-          birthdate: familyForm.birthdate,
-          gender: familyForm.gender,
-        }),
-      });
+      );
 
       if (!response.ok) {
         const payload = (await response.json().catch(() => null)) as {
@@ -721,13 +933,72 @@ function App() {
       }
 
       const payload = (await response.json()) as FamilyMember;
-      setFamilyMembers((current) => [payload, ...current]);
-      setFamilyForm(defaultFamilyForm);
-      setStatus(`${payload.name} was added to the family list.`);
+      setFamilyMembers((current) => {
+        if (isEditing) {
+          return current.map((member) =>
+            member.id === payload.id ? payload : member,
+          );
+        }
+
+        return [payload, ...current];
+      });
+      closeFamilyDrawer();
+      setStatus(
+        isEditing
+          ? `${payload.name} was updated.`
+          : `${payload.name} was added to the family list.`,
+      );
     } catch (submitError) {
       setError((submitError as Error).message);
     } finally {
       setSavingFamilyMember(false);
+    }
+  }
+
+  async function deleteFamilyMember(member: FamilyMember) {
+    const confirmed = window.confirm(
+      `Delete ${member.name}? Schedules assigned to this family member will be unassigned.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setError(null);
+    setStatus("Deleting family member...");
+
+    try {
+      const response = await fetch(getFamilyMemberDeleteUrl(member.id), {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(payload?.error ?? "We could not delete that family member.");
+      }
+
+      const deletedMemberId = member.id;
+      setFamilyMembers((current) =>
+        current.filter((currentMember) => currentMember.id !== deletedMemberId),
+      );
+      setSelectedFamilyMemberId((current) =>
+        current === deletedMemberId ? null : current,
+      );
+      setSchedules((current) =>
+        current.map((schedule) =>
+          schedule.familyMemberId === deletedMemberId
+            ? { ...schedule, familyMemberId: null, familyMemberName: null }
+            : schedule,
+        ),
+      );
+      if (editingFamilyMemberId === member.id) {
+        closeFamilyDrawer();
+      }
+      setStatus(`${member.name} was removed from the family list.`);
+    } catch (deleteError) {
+      setError((deleteError as Error).message);
     }
   }
 
@@ -768,7 +1039,7 @@ function App() {
 
       setStatus("Schedule deleted.");
       setActivityLogPage(0);
-      void loadActivityLogsPage(0);
+      void loadActivityLogsPage(0, undefined, false, selectedFamilyMemberId);
     } catch (deleteError) {
       setError((deleteError as Error).message);
     }
@@ -911,7 +1182,7 @@ function App() {
         nextCompleted ? "Intake marked complete." : "Intake marked as pending.",
       );
       setActivityLogPage(0);
-      void loadActivityLogsPage(0);
+      void loadActivityLogsPage(0, undefined, false, selectedFamilyMemberId);
     } catch (toggleError) {
       setSelectedSchedule(previous);
       setError((toggleError as Error).message);
@@ -935,10 +1206,24 @@ function App() {
   const totalCount = selectedSchedule?.intakes.length ?? 0;
   const completionPercent =
     totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
-  const prescribedSchedules = schedules.filter(
+  const selectedFamilyMember = selectedFamilyMemberId
+    ? familyMembers.find((member) => member.id === selectedFamilyMemberId) ?? null
+    : null;
+  const visibleSchedules = selectedFamilyMemberId
+    ? schedules.filter(
+        (schedule) => schedule.familyMemberId === selectedFamilyMemberId,
+      )
+    : schedules;
+  const scheduleSource = selectedFamilyMemberId ? visibleSchedules : schedules;
+  const visibleActivityLogs = selectedFamilyMemberId
+    ? activityLogs.filter(
+        (entry) => entry.familyMemberId === selectedFamilyMemberId,
+      )
+    : activityLogs;
+  const prescribedSchedules = scheduleSource.filter(
     (schedule) => schedule.scheduleType === "prescribed",
   );
-  const supplementSchedules = schedules.filter(
+  const supplementSchedules = scheduleSource.filter(
     (schedule) => schedule.scheduleType === "supplement",
   );
   const calendarView =
@@ -949,8 +1234,39 @@ function App() {
   return (
     <main className="app-shell">
       <div className="noise" aria-hidden="true" />
-      <section className="panel">
-        {route.kind === "home" ? (
+      <header className="site-header">
+        <div className="site-header-inner">
+          <button
+            className="site-brand"
+            type="button"
+            onClick={() => navigate("/")}
+          >
+            <span className="section-label">Pill Track</span>
+            <strong>Medication, without losing the list.</strong>
+          </button>
+
+          <nav className="site-nav" aria-label="Primary">
+            <button
+              className={`site-link ${route.kind === "home" ? "active" : ""}`}
+              type="button"
+              onClick={() => navigate("/")}
+            >
+              Home
+            </button>
+            <button
+              className={`site-link ${route.kind === "family" ? "active" : ""}`}
+              type="button"
+              onClick={() => navigate("/family")}
+            >
+              Family Members
+            </button>
+          </nav>
+        </div>
+      </header>
+
+      <section className="panel app-frame">
+        <div className="app-main">
+          {route.kind === "home" ? (
           <>
             <header className="topbar">
               <div>
@@ -958,248 +1274,302 @@ function App() {
                 <h1>Medication, without losing the list.</h1>
               </div>
             </header>
-            <section className="schedule-list-section">
-              <div className="section-heading">
-                <div>
-                  <p className="section-label">Tracked items</p>
-                  <h2>Prescribed and wellness items, separated clearly</h2>
-                </div>
-                <p className="lead">
-                  Prescriptions stay in one lane while supplements and vitamins
-                  get their own section for easy scanning.
-                </p>
+
+            <section className="family-avatar-strip-section" aria-label="Family member selector">
+              <div className="family-avatar-strip">
+                {loadingFamilyMembers ? (
+                  Array.from({ length: 4 }, (_, index) => (
+                    <button
+                      className="family-avatar-button skeleton-card"
+                      type="button"
+                      key={`family-avatar-skeleton-${index}`}
+                      disabled
+                    >
+                      <span className="skeleton-line skeleton-avatar-circle" aria-hidden="true" />
+                      <span className="skeleton-line skeleton-avatar-label" aria-hidden="true" />
+                    </button>
+                  ))
+                ) : familyMembers.length === 0 ? (
+                  <div className="family-avatar-empty">
+                    <p>Add a family member to start assigning medications.</p>
+                  </div>
+                ) : (
+                  familyMembers.map((member) => {
+                    const isSelected = member.id === selectedFamilyMemberId;
+
+                    return (
+                      <button
+                        className={`family-avatar-button ${isSelected ? "selected" : ""}`}
+                        type="button"
+                        key={member.id}
+                        onClick={() =>
+                          selectFamilyMember(isSelected ? null : member.id)
+                        }
+                        aria-pressed={isSelected}
+                        aria-label={
+                          isSelected
+                            ? `${member.name} selected`
+                            : `Show medications for ${member.name}`
+                        }
+                      >
+                        <Avatar
+                          className="family-avatar-image"
+                          src={member.avatarDataUrl ?? undefined}
+                          alt={member.name}
+                          sx={{ width: 100, height: 100 }}
+                        >
+                          {getInitials(member.name)}
+                        </Avatar>
+                      </button>
+                    );
+                  })
+                )}
               </div>
+            </section>
 
-              <div className="tracker-sections">
-                {(
-                  [
-                    {
-                      scheduleType: "prescribed" as const,
-                      schedules: prescribedSchedules,
-                    },
-                    {
-                      scheduleType: "supplement" as const,
-                      schedules: supplementSchedules,
-                    },
-                  ] as const
-                ).map(({ scheduleType, schedules: sectionSchedules }, index) => (
-                  <article className={`tracker-section tracker-section-${scheduleType}`} key={scheduleType}>
-                    <div className="section-heading">
-                      <div>
-                        <p className="section-label">
-                          {getScheduleTypeLabel(scheduleType)}
+            <section className="schedule-list-section">
+              {selectedFamilyMemberId && visibleSchedules.length === 0 ? (
+                <div className="list-empty family-selected-empty">
+                  <p>No medications</p>
+                </div>
+              ) : (
+                <div className="tracker-sections">
+                  {(
+                    [
+                      {
+                        scheduleType: "prescribed" as const,
+                        schedules: prescribedSchedules,
+                      },
+                      {
+                        scheduleType: "supplement" as const,
+                        schedules: supplementSchedules,
+                      },
+                    ] as const
+                  ).map(({ scheduleType, schedules: sectionSchedules }, index) => (
+                    <article className={`tracker-section tracker-section-${scheduleType}`} key={scheduleType}>
+                      <div className="section-heading">
+                        <div>
+                          <p className="section-label">
+                            {getScheduleTypeLabel(scheduleType)}
+                          </p>
+                          <h2>{getScheduleSectionCopy(scheduleType)}</h2>
+                        </div>
+                        <p className="lead">
+                          {sectionSchedules.length === 0
+                            ? "No items yet."
+                            : `${sectionSchedules.length} item${sectionSchedules.length === 1 ? "" : "s"} saved.`}
                         </p>
-                        <h2>{getScheduleSectionCopy(scheduleType)}</h2>
                       </div>
-                      <p className="lead">
-                        {sectionSchedules.length === 0
-                          ? "No items yet."
-                          : `${sectionSchedules.length} item${sectionSchedules.length === 1 ? "" : "s"} saved.`}
-                      </p>
-                    </div>
 
-                    {loadingSchedules ? (
-                      <div className="schedule-grid">
-                        {Array.from({ length: 3 }, (_, skeletonIndex) => (
-                          <article
-                            className="schedule-card skeleton-card"
-                            key={`${scheduleType}-schedule-skeleton-${skeletonIndex}`}
-                          >
-                            <div
-                              className={`schedule-card-banner tone-${((index + skeletonIndex) % 5) + 1}`}
+                      {loadingSchedules ? (
+                        <div className="schedule-grid">
+                          {Array.from({ length: 3 }, (_, skeletonIndex) => (
+                            <article
+                              className="schedule-card skeleton-card"
+                              key={`${scheduleType}-schedule-skeleton-${skeletonIndex}`}
                             >
-                              <div className="schedule-card-banner-overlay" />
-                              <div className="schedule-card-banner-copy">
-                                <span
-                                  className="skeleton-line skeleton-card-kicker"
-                                  aria-hidden="true"
-                                />
-                                <span
-                                  className="skeleton-line skeleton-card-title"
-                                  aria-hidden="true"
-                                />
-                                <span
-                                  className="skeleton-line skeleton-card-copy"
-                                  aria-hidden="true"
-                                />
+                              <div
+                                className={`schedule-card-banner tone-${((index + skeletonIndex) % 5) + 1}`}
+                              >
+                                <div className="schedule-card-banner-overlay" />
+                                <div className="schedule-card-banner-copy">
+                                  <span
+                                    className="skeleton-line skeleton-card-kicker"
+                                    aria-hidden="true"
+                                  />
+                                  <span
+                                    className="skeleton-line skeleton-card-title"
+                                    aria-hidden="true"
+                                  />
+                                  <span
+                                    className="skeleton-line skeleton-card-copy"
+                                    aria-hidden="true"
+                                  />
+                                </div>
                               </div>
-                            </div>
-                            <div className="schedule-card-body">
-                              <dl className="schedule-meta-grid">
-                                {Array.from({ length: 4 }, (_, metaIndex) => (
-                                  <div
-                                    key={`${scheduleType}-schedule-skeleton-meta-${skeletonIndex}-${metaIndex}`}
+                              <div className="schedule-card-body">
+                                <dl className="schedule-meta-grid">
+                                  {Array.from({ length: 4 }, (_, metaIndex) => (
+                                    <div
+                                      key={`${scheduleType}-schedule-skeleton-meta-${skeletonIndex}-${metaIndex}`}
+                                    >
+                                      <dt>
+                                        <span
+                                          className="skeleton-line skeleton-meta-label"
+                                          aria-hidden="true"
+                                        />
+                                      </dt>
+                                      <dd>
+                                        <span
+                                          className="skeleton-line skeleton-meta-value"
+                                          aria-hidden="true"
+                                        />
+                                      </dd>
+                                    </div>
+                                  ))}
+                                </dl>
+                                <div className="schedule-card-actions">
+                                  <span
+                                    className="skeleton-line skeleton-action"
+                                    aria-hidden="true"
+                                  />
+                                  <span
+                                    className="skeleton-line skeleton-action"
+                                    aria-hidden="true"
+                                  />
+                                  <span
+                                    className="skeleton-line skeleton-action"
+                                    aria-hidden="true"
+                                  />
+                                </div>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      ) : sectionSchedules.length === 0 ? (
+                        <div className="list-empty">
+                          <p>
+                            {scheduleType === "supplement"
+                              ? "No supplements or vitamins have been created yet."
+                              : "No prescribed medications have been created yet."}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="schedule-grid">
+                          {sectionSchedules.map((schedule, sectionIndex) => (
+                            <article className="schedule-card" key={schedule.id}>
+                              <div
+                                className={`schedule-card-banner tone-${((index + sectionIndex) % 5) + 1}`}
+                              >
+                                <div className="schedule-card-banner-overlay" />
+                                <div className="schedule-card-banner-copy">
+                                  <span className="schedule-card-banner-kicker">
+                                    {getScheduleTypeLabel(schedule.scheduleType)}
+                                  </span>
+                                  <button
+                                    className="schedule-card-title-button"
+                                    type="button"
+                                    onClick={() =>
+                                      navigate(
+                                        `/calendar/${encodeURIComponent(schedule.token)}`,
+                                      )
+                                    }
                                   >
-                                    <dt>
-                                      <span
-                                        className="skeleton-line skeleton-meta-label"
-                                        aria-hidden="true"
-                                      />
-                                    </dt>
+                                    {schedule.medicine}
+                                  </button>
+                                  <p>
+                                    {schedule.scheduleType === "supplement"
+                                      ? "Daily check-in · Complete anytime today"
+                                      : `First dose at ${formatTimeInputLabel(
+                                          schedule.startTime ?? "08:00",
+                                        )} · ${schedule.durationDays} days`}
+                                  </p>
+                                </div>
+                              </div>
+
+                              <div className="schedule-card-body">
+                                <dl className="schedule-meta-grid">
+                                  <div>
+                                    <dt>Duration</dt>
+                                    <dd>{schedule.durationDays} days</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Tracker</dt>
                                     <dd>
-                                      <span
-                                        className="skeleton-line skeleton-meta-value"
-                                        aria-hidden="true"
-                                      />
+                                      {schedule.scheduleType === "supplement"
+                                        ? "Daily check-in"
+                                        : `${schedule.timesPerDay} doses / day`}
                                     </dd>
                                   </div>
-                                ))}
-                              </dl>
-                              <div className="schedule-card-actions">
-                                <span
-                                  className="skeleton-line skeleton-action"
-                                  aria-hidden="true"
-                                />
-                                <span
-                                  className="skeleton-line skeleton-action"
-                                  aria-hidden="true"
-                                />
-                                <span
-                                  className="skeleton-line skeleton-action"
-                                  aria-hidden="true"
-                                />
-                              </div>
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-                    ) : sectionSchedules.length === 0 ? (
-                      <div className="list-empty">
-                        <p>
-                          {scheduleType === "supplement"
-                            ? "No supplements or vitamins have been created yet."
-                            : "No prescribed medications have been created yet."}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="schedule-grid">
-                        {sectionSchedules.map((schedule, sectionIndex) => (
-                          <article className="schedule-card" key={schedule.id}>
-                            <div
-                              className={`schedule-card-banner tone-${((index + sectionIndex) % 5) + 1}`}
-                            >
-                              <div className="schedule-card-banner-overlay" />
-                              <div className="schedule-card-banner-copy">
-                                <span className="schedule-card-banner-kicker">
-                                  {getScheduleTypeLabel(schedule.scheduleType)}
-                                </span>
-                                <button
-                                  className="schedule-card-title-button"
-                                  type="button"
-                                  onClick={() =>
-                                    navigate(
-                                      `/calendar/${encodeURIComponent(schedule.token)}`,
-                                    )
-                                  }
-                                >
-                                  {schedule.medicine}
-                                </button>
-                                <p>
-                                  {schedule.scheduleType === "supplement"
-                                    ? "Daily check-in · Complete anytime today"
-                                    : `First dose at ${formatTimeInputLabel(
-                                        schedule.startTime ?? "08:00",
-                                      )} · ${schedule.durationDays} days`}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="schedule-card-body">
-                              <dl className="schedule-meta-grid">
-                                <div>
-                                  <dt>Duration</dt>
-                                  <dd>{schedule.durationDays} days</dd>
-                                </div>
-                                <div>
-                                  <dt>Tracker</dt>
-                                  <dd>
-                                    {schedule.scheduleType === "supplement"
-                                      ? "Daily check-in"
-                                      : `${schedule.timesPerDay} doses / day`}
-                                  </dd>
-                                </div>
-                                <div>
-                                  <dt>Start date</dt>
-                                  <dd>{formatDateLabel(schedule.startDate)}</dd>
-                                </div>
-                                <div>
-                                  <dt>Created</dt>
-                                  <dd>{formatDateLabel(schedule.createdAt)}</dd>
-                                </div>
-                                <div>
-                                  <dt>Assigned to</dt>
-                                  <dd>{schedule.familyMemberName ?? "Unassigned"}</dd>
-                                </div>
-                                <div>
-                                  <dt>Start time</dt>
-                                  <dd>
-                                    {schedule.scheduleType === "supplement"
-                                      ? "Anytime"
-                                      : formatTimeInputLabel(
-                                          schedule.startTime ?? "08:00",
-                                        )}
-                                  </dd>
-                                </div>
-                              </dl>
-
-                              {schedule.scheduleType === "prescribed" ? (
-                                <div className="schedule-dose-preview">
-                                  <p>Generated dose times</p>
-                                  <div className="dose-preview-list">
-                                    {getPrescribedDoseTimes(
-                                      schedule.timesPerDay,
-                                      schedule.startTime ?? "08:00",
-                                    ).map((doseTime) => (
-                                      <span key={doseTime}>{doseTime}</span>
-                                    ))}
+                                  <div>
+                                    <dt>Start date</dt>
+                                    <dd>{formatDateLabel(schedule.startDate)}</dd>
                                   </div>
-                                </div>
-                              ) : (
-                                <div className="schedule-dose-preview schedule-dose-preview-supplement">
-                                  <p>Simple daily tracker</p>
-                                  <span>
-                                    Mark complete anytime during the day. If it
-                                    is still pending tomorrow, it becomes Missed
-                                    Dose.
-                                  </span>
-                                </div>
-                              )}
+                                  <div>
+                                    <dt>Created</dt>
+                                    <dd>{formatDateLabel(schedule.createdAt)}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Assigned to</dt>
+                                    <dd>{schedule.familyMemberName ?? "Unassigned"}</dd>
+                                  </div>
+                                  <div>
+                                    <dt>Start time</dt>
+                                    <dd>
+                                      {schedule.scheduleType === "supplement"
+                                        ? "Anytime"
+                                        : formatTimeInputLabel(
+                                            schedule.startTime ?? "08:00",
+                                          )}
+                                    </dd>
+                                  </div>
+                                </dl>
 
-                              <div className="schedule-card-actions">
-                                <button
-                                  className="view-button"
-                                  type="button"
-                                  onClick={() =>
-                                    navigate(
-                                      `/calendar/${encodeURIComponent(schedule.token)}`,
-                                    )
-                                  }
-                                >
-                                  View more
-                                </button>
-                                <button
-                                  className="ghost-button"
-                                  type="button"
-                                  onClick={() => beginEditingSchedule(schedule)}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  className="delete-button"
-                                  type="button"
-                                  onClick={() => void deleteSchedule(schedule.token)}
-                                >
-                                  Delete
-                                </button>
+                                {schedule.scheduleType === "prescribed" ? (
+                                  <div className="schedule-dose-preview">
+                                    <p>Generated dose times</p>
+                                    <div className="dose-preview-list">
+                                      {getPrescribedDoseTimes(
+                                        schedule.timesPerDay,
+                                        schedule.startTime ?? "08:00",
+                                      ).map((doseTime) => (
+                                        <span key={doseTime}>{doseTime}</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="schedule-dose-preview schedule-dose-preview-supplement">
+                                    <p>Simple daily tracker</p>
+                                    <span>
+                                      Mark complete anytime during the day. If it
+                                      is still pending tomorrow, it becomes Missed
+                                      Dose.
+                                    </span>
+                                  </div>
+                                )}
+
+                                <div className="schedule-card-actions">
+                                  <button
+                                    className="schedule-icon-button"
+                                    type="button"
+                                    onClick={() =>
+                                      navigate(
+                                        `/calendar/${encodeURIComponent(schedule.token)}`,
+                                      )
+                                    }
+                                    aria-label={`View ${schedule.medicine}`}
+                                    title="View"
+                                  >
+                                    <VisibilityOutlinedIcon fontSize="small" />
+                                  </button>
+                                  <button
+                                    className="schedule-icon-button"
+                                    type="button"
+                                    onClick={() => beginEditingSchedule(schedule)}
+                                    aria-label={`Edit ${schedule.medicine}`}
+                                    title="Edit"
+                                  >
+                                    <EditOutlinedIcon fontSize="small" />
+                                  </button>
+                                  <button
+                                    className="schedule-icon-button danger"
+                                    type="button"
+                                    onClick={() => void deleteSchedule(schedule.token)}
+                                    aria-label={`Delete ${schedule.medicine}`}
+                                    title="Delete"
+                                  >
+                                    <DeleteOutlineRoundedIcon fontSize="small" />
+                                  </button>
+                                </div>
                               </div>
-                            </div>
-                          </article>
-                        ))}
-                      </div>
-                    )}
-                  </article>
-                ))}
-              </div>
+                            </article>
+                          ))}
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
             </section>
             <div className="dashboard-grid">
               <section className="activity-log-card">
@@ -1233,14 +1603,16 @@ function App() {
                         </div>
                       </article>
                     ))
-                  ) : activityLogs.length === 0 ? (
+                  ) : visibleActivityLogs.length === 0 ? (
                     <div className="list-empty">
                       <p>
-                        No activity yet. Create a schedule to start the log.
+                        {selectedFamilyMemberId
+                          ? "No activity log"
+                          : "No activity yet. Create a schedule to start the log."}
                       </p>
                     </div>
                   ) : (
-                    activityLogs.map((entry) => (
+                    visibleActivityLogs.map((entry) => (
                       <article className="activity-log-item" key={entry.id}>
                         <span
                           className={`activity-log-badge ${entry.actionType}`}
@@ -1300,169 +1672,6 @@ function App() {
                       Next
                     </button>
                   </div>
-                </div>
-              </section>
-
-              <section className="family-card">
-                <div className="section-heading">
-                  <div>
-                    <p className="section-label">Family</p>
-                    <h2>Full household list, plus quick add</h2>
-                  </div>
-                  <p className="lead">
-                    {familyMembers.length === 0
-                      ? "No family members yet."
-                      : `${familyMembers.length} member${familyMembers.length === 1 ? "" : "s"} saved.`}
-                  </p>
-                </div>
-
-                <div className="family-layout">
-                  <article className="family-panel family-list-panel">
-                    <div className="family-panel-heading">
-                      <div>
-                        <p className="section-label">Members</p>
-                        <h3>Everyone in the family group</h3>
-                      </div>
-                    </div>
-
-                    <div className="family-list">
-                      {loadingFamilyMembers ? (
-                        Array.from({ length: 3 }, (_, index) => (
-                          <article
-                            className="family-member skeleton-card"
-                            key={`family-skeleton-${index}`}
-                          >
-                            <span
-                              className="skeleton-line skeleton-family-avatar"
-                              aria-hidden="true"
-                            />
-                            <div className="family-member-copy">
-                              <span
-                                className="skeleton-line skeleton-family-name"
-                                aria-hidden="true"
-                              />
-                              <span
-                                className="skeleton-line skeleton-family-meta"
-                                aria-hidden="true"
-                              />
-                            </div>
-                          </article>
-                        ))
-                      ) : familyMembers.length === 0 ? (
-                        <div className="list-empty">
-                          <p>Add a family member to start the list.</p>
-                        </div>
-                      ) : (
-                        familyMembers.map((member) => (
-                          <article className="family-member" key={member.id}>
-                            <span className="family-member-avatar" aria-hidden="true">
-                              {getInitials(member.name)}
-                            </span>
-                            <div className="family-member-copy">
-                              <strong>{member.name}</strong>
-                              <span>
-                                {formatBirthdateLabel(member.birthdate)} ·{" "}
-                                {getGenderLabel(member.gender)}
-                              </span>
-                            </div>
-                          </article>
-                        ))
-                      )}
-                    </div>
-                  </article>
-
-                  <article className="family-panel family-form-panel">
-                    <div className="family-panel-heading">
-                      <div>
-                        <p className="section-label">Add Family Member</p>
-                        <h3>Quick entry form</h3>
-                      </div>
-                    </div>
-
-                    <form className="family-form" onSubmit={handleFamilySubmit}>
-                      <label>
-                        <span>Family member name</span>
-                        <input
-                          autoComplete="off"
-                          name="familyName"
-                          placeholder="Ava Khan"
-                          required
-                          value={familyForm.name}
-                          onChange={(event) =>
-                            setFamilyForm((current) => ({
-                              ...current,
-                              name: event.target.value,
-                            }))
-                          }
-                        />
-                      </label>
-
-                      <label>
-                        <span>Birthdate</span>
-                        <input
-                          name="familyBirthdate"
-                          type="date"
-                          required
-                          value={familyForm.birthdate}
-                          onChange={(event) =>
-                            setFamilyForm((current) => ({
-                              ...current,
-                              birthdate: event.target.value,
-                            }))
-                          }
-                        />
-                      </label>
-
-                      <label>
-                        <span>Gender</span>
-                        <div
-                          className="family-gender-group"
-                          role="radiogroup"
-                          aria-label="Gender"
-                        >
-                          <label className="family-gender-option">
-                            <input
-                              type="radio"
-                              name="familyGender"
-                              value="male"
-                              checked={familyForm.gender === "male"}
-                              onChange={() =>
-                                setFamilyForm((current) => ({
-                                  ...current,
-                                  gender: "male",
-                                }))
-                              }
-                            />
-                            <span>Male</span>
-                          </label>
-                          <label className="family-gender-option">
-                            <input
-                              type="radio"
-                              name="familyGender"
-                              value="female"
-                              checked={familyForm.gender === "female"}
-                              onChange={() =>
-                                setFamilyForm((current) => ({
-                                  ...current,
-                                  gender: "female",
-                                }))
-                              }
-                            />
-                            <span>Female</span>
-                          </label>
-                        </div>
-                      </label>
-
-                      <button type="submit" disabled={savingFamilyMember}>
-                        {savingFamilyMember ? "Saving..." : "Add family member"}
-                      </button>
-
-                      <p className="form-footer">
-                        These members are stored separately from medication
-                        schedules.
-                      </p>
-                    </form>
-                  </article>
                 </div>
               </section>
             </div>
@@ -1728,6 +1937,337 @@ function App() {
               </div>
             ) : null}
           </>
+        ) : route.kind === "family" ? (
+          <>
+            <header className="topbar family-topbar">
+              <div>
+                <p className="eyebrow">Family Members</p>
+                <h1>My Family</h1>
+              </div>
+              <p className="lead family-topbar-count">
+                {familyMembers.length === 0
+                  ? "No family members yet."
+                  : `${familyMembers.length} member${familyMembers.length === 1 ? "" : "s"} saved.`}
+              </p>
+            </header>
+
+            <section className="">
+              <div className="">
+                <div className="family-panel-heading family-panel-heading-inline">
+                  <div>
+                    <p className="section-label">Members</p>
+                    <h3>Everyone in the family group</h3>
+                  </div>
+                  <button
+                    className="view-button family-add-button"
+                    type="button"
+                    onClick={() => openFamilyDrawer()}
+                  >
+                    + Add New
+                  </button>
+                </div>
+
+                <div className="family-list">
+                  {loadingFamilyMembers ? (
+                    Array.from({ length: 4 }, (_, index) => (
+                      <article
+                        className="family-member skeleton-card"
+                        key={`family-skeleton-${index}`}
+                      >
+                        <div className="family-member-header">
+                          <span
+                            className="skeleton-line skeleton-family-avatar"
+                            aria-hidden="true"
+                          />
+                          <div className="family-member-copy">
+                            <span
+                              className="skeleton-line skeleton-family-name"
+                              aria-hidden="true"
+                            />
+                            <span
+                              className="skeleton-line skeleton-family-meta"
+                              aria-hidden="true"
+                            />
+                          </div>
+                        </div>
+                        <div className="family-member-divider" />
+                        <div className="family-member-meta-grid">
+                          <span
+                            className="skeleton-line skeleton-family-meta"
+                            aria-hidden="true"
+                          />
+                          <span
+                            className="skeleton-line skeleton-family-meta"
+                            aria-hidden="true"
+                          />
+                          <span
+                            className="skeleton-line skeleton-family-meta"
+                            aria-hidden="true"
+                          />
+                          <span
+                            className="skeleton-line skeleton-family-meta"
+                            aria-hidden="true"
+                          />
+                        </div>
+                        <div className="family-member-footer">
+                          <span
+                            className="skeleton-line skeleton-family-action"
+                            aria-hidden="true"
+                          />
+                          <span
+                            className="skeleton-line skeleton-family-action"
+                            aria-hidden="true"
+                          />
+                        </div>
+                      </article>
+                    ))
+                  ) : familyMembers.length === 0 ? (
+                    <div className="list-empty">
+                      <p>Add a family member to start the list.</p>
+                    </div>
+                  ) : (
+                    familyMembers.map((member) => (
+                      <article className="family-member" key={member.id}>
+                        <div className="family-member-header">
+                          <Avatar
+                            className="family-member-avatar"
+                            src={member.avatarDataUrl ?? undefined}
+                            alt={member.name}
+                            sx={{ height: 70 }}
+                          >
+                            {getInitials(member.name)}
+                          </Avatar>
+                          <div className="family-member-copy">
+                            <strong>{member.name}</strong>
+                            <span className="family-member-subtitle">
+                              {getGenderLabel(member.gender)} ·{" "}
+                              {formatBirthdateLabel(member.birthdate)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="family-member-divider" />
+                        <div className="family-member-meta-grid">
+                          <div>
+                            <span>Birthdate</span>
+                            <strong>
+                              {formatBirthdateLabel(member.birthdate)}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Gender</span>
+                            <strong>{getGenderLabel(member.gender)}</strong>
+                          </div>
+                          <div>
+                            <span>Status</span>
+                            <strong>Active</strong>
+                          </div>
+                          <div>
+                            <span>Added</span>
+                            <strong>{formatDateLabel(member.createdAt)}</strong>
+                          </div>
+                        </div>
+                        <div className="family-member-footer">
+                          <button
+                            className="family-icon-button"
+                            type="button"
+                            onClick={() => openFamilyDrawer(member)}
+                            aria-label={`Edit ${member.name}`}
+                            title="Edit"
+                          >
+                            <EditOutlinedIcon fontSize="small" />
+                          </button>
+                          <button
+                            className="family-icon-button danger"
+                            type="button"
+                            onClick={() => void deleteFamilyMember(member)}
+                            aria-label={`Delete ${member.name}`}
+                            title="Delete"
+                          >
+                            <DeleteOutlineRoundedIcon fontSize="small" />
+                          </button>
+                        </div>
+                      </article>
+                    ))
+                  )}
+                </div>
+              </div>
+            </section>
+
+            {isFamilyDrawerOpen ? (
+              <div
+                className="family-drawer-backdrop"
+                role="presentation"
+                onClick={closeFamilyDrawer}
+              >
+                <aside
+                  className="family-drawer"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="family-drawer-title"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <div className="family-drawer-header">
+                    <div>
+                      <p className="section-label">Family Members</p>
+                      <h3 id="family-drawer-title">
+                        {editingFamilyMemberId
+                          ? "Edit Family Member"
+                          : "Add New Family Member"}
+                      </h3>
+                    </div>
+                    <button
+                      className="modal-close"
+                      type="button"
+                      onClick={closeFamilyDrawer}
+                      aria-label="Close family drawer"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  <div className="family-drawer-actions">
+                  </div>
+
+                  <form className="family-form family-drawer-form" onSubmit={handleFamilySubmit}>
+                    <label>
+                      <span>Family member name</span>
+                      <input
+                        autoComplete="off"
+                        name="familyName"
+                        placeholder="Ava Khan"
+                        required
+                        value={familyForm.name}
+                        onChange={(event) =>
+                          setFamilyForm((current) => ({
+                            ...current,
+                            name: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      <span>Birthdate</span>
+                      <input
+                        name="familyBirthdate"
+                        type="date"
+                        required
+                        value={familyForm.birthdate}
+                        onChange={(event) =>
+                          setFamilyForm((current) => ({
+                            ...current,
+                            birthdate: event.target.value,
+                          }))
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      <span>Gender</span>
+                      <div
+                        className="family-gender-group"
+                        role="radiogroup"
+                        aria-label="Gender"
+                      >
+                        <label className="family-gender-option">
+                          <input
+                            type="radio"
+                            name="familyGender"
+                            value="male"
+                            checked={familyForm.gender === "male"}
+                            onChange={() =>
+                              setFamilyForm((current) => ({
+                                ...current,
+                                gender: "male",
+                              }))
+                            }
+                          />
+                          <span>Male</span>
+                        </label>
+                        <label className="family-gender-option">
+                          <input
+                            type="radio"
+                            name="familyGender"
+                            value="female"
+                            checked={familyForm.gender === "female"}
+                            onChange={() =>
+                              setFamilyForm((current) => ({
+                                ...current,
+                                gender: "female",
+                              }))
+                            }
+                          />
+                          <span>Female</span>
+                        </label>
+                      </div>
+                    </label>
+
+                    <label>
+                      <span>Image thumbnail</span>
+                      <div className="family-avatar-upload">
+                        <Avatar
+                          className="family-avatar-preview"
+                          src={familyForm.avatarDataUrl ?? undefined}
+                          alt={familyForm.name || "Family member preview"}
+                        >
+                          {getInitials(familyForm.name || "FM")}
+                        </Avatar>
+                        <div className="family-avatar-upload-copy">
+                          <input
+                            accept="image/*"
+                            name="familyAvatar"
+                            type="file"
+                            onChange={handleFamilyAvatarUpload}
+                          />
+                          <p>
+                            Upload a small thumbnail to show this member on the
+                            landing page and family list.
+                          </p>
+                          {familyForm.avatarDataUrl ? (
+                            <button
+                              className="ghost-button family-avatar-clear"
+                              type="button"
+                              onClick={() =>
+                                setFamilyForm((current) => ({
+                                  ...current,
+                                  avatarDataUrl: null,
+                                }))
+                              }
+                            >
+                              Remove image
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </label>
+
+                    <div className="drawer-actions">
+                      <button type="submit" disabled={savingFamilyMember}>
+                        {savingFamilyMember
+                          ? "Saving..."
+                          : editingFamilyMemberId
+                            ? "Update family member"
+                            : "Add family member"}
+                      </button>
+
+                      <button
+                        className="ghost-button"
+                        type="button"
+                        onClick={closeFamilyDrawer}
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <p className="form-footer">
+                      These members are stored separately from medication
+                      schedules.
+                    </p>
+                  </form>
+                </aside>
+              </div>
+            ) : null}
+          </>
         ) : (
           <>
             <button
@@ -1823,55 +2363,53 @@ function App() {
               </div>
 
               {loadingDetail ? (
-                <div className="calendar-skeleton" aria-hidden="true">
-                  <div className="calendar-skeleton-surface">
-                    <div className="calendar-skeleton-weekdays">
-                      {weekdayLabels.map((label) => (
-                        <div
-                          className="skeleton-line skeleton-weekday"
-                          key={label}
-                        />
-                      ))}
-                    </div>
-
-                    <div className="calendar-scroll">
-                      <div className="calendar-weeks">
-                        {Array.from({ length: 5 }, (_, weekIndex) => (
-                          <div
-                            className="calendar-week"
-                            key={`skeleton-week-${weekIndex}`}
-                          >
-                            {Array.from({ length: 7 }, (_, dayIndex) => (
-                              <article
-                                className="calendar-cell calendar-skeleton-cell"
-                                key={`skeleton-cell-${weekIndex}-${dayIndex}`}
-                              >
-                                <header className="calendar-day-head">
-                                  <span className="skeleton-line skeleton-day-number" />
-                                  <span className="skeleton-line skeleton-day-weekday" />
-                                </header>
-                                <div className="calendar-day-intakes">
-                                  <span className="skeleton-pill" />
-                                  <span className="skeleton-pill" />
-                                </div>
-                              </article>
+                    <div className="calendar-skeleton" aria-hidden="true">
+                      <div className="calendar-skeleton-surface">
+                        <div className="calendar-scroll">
+                          <div className="calendar-weekdays">
+                            {weekdayLabels.map((label) => (
+                              <div
+                                className="skeleton-line skeleton-weekday"
+                                key={label}
+                              />
                             ))}
                           </div>
-                        ))}
+
+                          <div className="calendar-weeks">
+                            {Array.from({ length: 5 }, (_, weekIndex) => (
+                              <div
+                                className="calendar-week"
+                                key={`skeleton-week-${weekIndex}`}
+                              >
+                                {Array.from({ length: 7 }, (_, dayIndex) => (
+                                  <article
+                                    className="calendar-cell calendar-skeleton-cell"
+                                    key={`skeleton-cell-${weekIndex}-${dayIndex}`}
+                                  >
+                                    <header className="calendar-day-head">
+                                      <span className="skeleton-line skeleton-day-number" />
+                                    </header>
+                                    <div className="calendar-day-intakes">
+                                      <span className="skeleton-pill" />
+                                      <span className="skeleton-pill" />
+                                    </div>
+                                  </article>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-              ) : selectedSchedule && calendarView ? (
+                  ) : selectedSchedule && calendarView ? (
                 <>
                   <div className="calendar-surface">
-                    <div className="calendar-weekdays" aria-hidden="true">
-                      {weekdayLabels.map((label) => (
-                        <div key={label}>{label}</div>
-                      ))}
-                    </div>
-
                     <div className="calendar-scroll">
+                      <div className="calendar-weekdays" aria-hidden="true">
+                        {weekdayLabels.map((label) => (
+                          <div key={label}>{label}</div>
+                        ))}
+                      </div>
                       <div className="calendar-weeks">
                         {calendarView.weeks.map((week, weekIndex) => (
                           <div className="calendar-week" key={`${weekIndex}`}>
@@ -1891,17 +2429,7 @@ function App() {
                                   <span className="calendar-day-number">
                                     {cell.dayNumber}
                                   </span>
-                                  <span className="calendar-day-weekday">
-                                    {
-                                      weekdayLabels[
-                                        new Date(
-                                          `${cell.dateKey}T12:00:00`,
-                                        ).getDay()
-                                      ]
-                                    }
-                                  </span>
                                 </header>
-
                                 <div className="calendar-day-intakes">
                                   {cell.items.length === 0 ? (
                                     <span className="calendar-empty">
@@ -2010,6 +2538,7 @@ function App() {
             </section>
           </>
         )}
+        </div>
 
         <footer className="status-bar" aria-live="polite">
           <span>{status}</span>
