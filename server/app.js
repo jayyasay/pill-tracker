@@ -20,7 +20,7 @@ const pool = new Pool({
 })
 
 const app = express()
-app.use(express.json())
+app.use(express.json({ limit: '12mb' }))
 
 if (!process.env.VERCEL) {
   app.use((request, response, next) => {
@@ -117,25 +117,44 @@ function resolveScheduleTiming(scheduleType, timesPerDay, startTime) {
   }
 }
 
+function addDaysToDateKey(dateValue, days) {
+  const baseDate = new Date(`${toDateKey(dateValue)}T00:00:00.000Z`)
+  baseDate.setUTCDate(baseDate.getUTCDate() + days)
+  return baseDate.toISOString().slice(0, 10)
+}
+
 function buildIntakeRows({
   scheduleId,
   startDate,
   durationDays,
   doseTimes,
+  startTime,
+  timezoneOffsetMinutes = 0,
 }) {
   const intakeRows = []
+  const scheduleStartMinutes =
+    typeof startTime === 'string' ? parseTimeToMinutes(startTime) : null
 
   for (let dayIndex = 0; dayIndex < durationDays; dayIndex += 1) {
-    const dayDate = new Date(`${startDate}T12:00:00`)
-    dayDate.setDate(dayDate.getDate() + dayIndex)
-    const dayString = toDateKey(dayDate)
+    const dayString = addDaysToDateKey(startDate, dayIndex)
 
     for (let doseIndex = 0; doseIndex < doseTimes.length; doseIndex += 1) {
+      const doseTime = doseTimes[doseIndex]
+      const doseMinutes = parseTimeToMinutes(doseTime)
+      const isOvernightDose =
+        scheduleStartMinutes !== null &&
+        doseMinutes !== null &&
+        doseIndex > 0 &&
+        doseMinutes < scheduleStartMinutes
+      const scheduledDate = isOvernightDose
+        ? addDaysToDateKey(dayString, 1)
+        : dayString
+
       intakeRows.push([
         scheduleId,
         dayIndex,
         doseIndex,
-        startOfDayIso(dayString, doseTimes[doseIndex]),
+        startOfDayIso(scheduledDate, doseTime, timezoneOffsetMinutes),
       ])
     }
   }
@@ -155,15 +174,134 @@ function toDateKey(value) {
   return `${year}-${month}-${day}`
 }
 
-function startOfDayIso(dateValue, timeValue) {
-  const [year, month, day] = dateValue.split('-').map(Number)
+function startOfDayIso(dateValue, timeValue, timezoneOffsetMinutes = 0) {
+  const [year, month, day] = String(dateValue)
+    .slice(0, 10)
+    .split('-')
+    .map(Number)
   const [hour, minute] = timeValue.split(':').map(Number)
-  return new Date(year, month - 1, day, hour, minute, 0, 0).toISOString()
+  const offset = Number.isFinite(Number(timezoneOffsetMinutes))
+    ? Number(timezoneOffsetMinutes)
+    : 0
+  return new Date(
+    Date.UTC(year, month - 1, day, hour, minute, 0, 0) + offset * 60_000,
+  ).toISOString()
+}
+
+async function normalizeLegacyOvernightIntakes() {
+  const result = await pool.query(`
+    SELECT
+      si.id,
+      si.schedule_id,
+      si.scheduled_at,
+      si.day_index,
+      si.dose_index,
+      s.start_date,
+      s.start_time,
+      s.times_per_day
+    FROM schedule_intakes si
+    JOIN schedules s ON s.id = si.schedule_id
+    WHERE s.schedule_type = 'prescribed'
+      AND si.dose_index > 0
+      AND si.scheduled_at IS NOT NULL
+    ORDER BY si.schedule_id ASC, si.day_index ASC, si.dose_index ASC
+  `)
+
+  const rowsBySchedule = new Map()
+
+  for (const row of result.rows) {
+    const scheduleId = row.schedule_id
+    const rows = rowsBySchedule.get(scheduleId) ?? []
+    rows.push(row)
+    rowsBySchedule.set(scheduleId, rows)
+  }
+
+  const client = await pool.connect()
+
+  try {
+    await client.query('BEGIN')
+
+    for (const rows of rowsBySchedule.values()) {
+      const firstRow = rows[0]
+      const scheduleStartTime = firstRow.start_time ?? '08:00'
+      const startMinutes = parseTimeToMinutes(scheduleStartTime)
+
+      if (startMinutes === null) {
+        continue
+      }
+
+      const doseTimes = makePrescribedDoseTimes(firstRow.times_per_day, scheduleStartTime)
+      const referenceRow = rows.find((row) => row.dose_index === 0) ?? rows[0]
+      const referenceDoseTime =
+        doseTimes[referenceRow.dose_index] ?? doseTimes[0] ?? scheduleStartTime
+      const cycleDay = addDaysToDateKey(firstRow.start_date, referenceRow.day_index)
+      const inferredOffsetMinutes = Math.round(
+        (new Date(referenceRow.scheduled_at).getTime() -
+          new Date(startOfDayIso(cycleDay, referenceDoseTime, 0)).getTime()) /
+          60_000,
+      )
+
+      for (const row of rows) {
+        const doseTime = doseTimes[row.dose_index] ?? doseTimes[0] ?? scheduleStartTime
+        const doseMinutes = parseTimeToMinutes(doseTime)
+
+        if (doseMinutes === null) {
+          continue
+        }
+
+        const baseCycleDay = addDaysToDateKey(firstRow.start_date, row.day_index)
+        const intendedDay =
+          row.dose_index > 0 && doseMinutes < startMinutes
+            ? addDaysToDateKey(baseCycleDay, 1)
+            : baseCycleDay
+        const expectedScheduledAt = startOfDayIso(
+          intendedDay,
+          doseTime,
+          inferredOffsetMinutes,
+        )
+
+        if (new Date(row.scheduled_at).toISOString() !== expectedScheduledAt) {
+          await client.query(
+            'UPDATE schedule_intakes SET scheduled_at = $2 WHERE id = $1',
+            [row.id, expectedScheduledAt],
+          )
+        }
+      }
+    }
+
+    await client.query(`
+      UPDATE schedule_intakes si
+      SET intake_status = 'pending',
+          missed_at = NULL
+      FROM schedules s
+      WHERE s.id = si.schedule_id
+        AND s.schedule_type = 'prescribed'
+        AND si.completed_at IS NULL
+        AND si.intake_status = 'missed'
+        AND si.scheduled_at > (CURRENT_TIMESTAMP - INTERVAL '5 hours')
+    `)
+
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 }
 
 async function ensureSchema() {
   await pool.query(`
     CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+    CREATE TABLE IF NOT EXISTS family_members (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+      name text NOT NULL,
+      birthdate date NOT NULL,
+      gender text NOT NULL CHECK (gender IN ('male', 'female')),
+      avatar_data_url text NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    );
 
     CREATE TABLE IF NOT EXISTS schedules (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -191,20 +329,13 @@ async function ensureSchema() {
       UNIQUE (schedule_id, day_index, dose_index)
     );
 
-    CREATE TABLE IF NOT EXISTS family_members (
-      id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      name text NOT NULL,
-      birthdate date NOT NULL,
-      gender text NOT NULL CHECK (gender IN ('male', 'female')),
-      created_at timestamptz NOT NULL DEFAULT now()
-    );
-
     CREATE TABLE IF NOT EXISTS activity_logs (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       action_type text NOT NULL,
       summary text NOT NULL,
       schedule_id uuid NULL REFERENCES schedules(id) ON DELETE SET NULL,
       schedule_token text NULL,
+      family_member_id uuid NULL REFERENCES family_members(id) ON DELETE SET NULL,
       medicine text NULL,
       details jsonb NOT NULL DEFAULT '{}'::jsonb,
       created_at timestamptz NOT NULL DEFAULT now()
@@ -243,6 +374,11 @@ async function ensureSchema() {
   `)
 
   await pool.query(`
+    ALTER TABLE family_members
+    ADD COLUMN IF NOT EXISTS avatar_data_url text NULL
+  `)
+
+  await pool.query(`
     ALTER TABLE schedules
     ADD COLUMN IF NOT EXISTS start_time text NULL
   `)
@@ -275,12 +411,19 @@ async function ensureSchema() {
   `)
 
   await pool.query(`
+    ALTER TABLE activity_logs
+    ADD COLUMN IF NOT EXISTS family_member_id uuid NULL REFERENCES family_members(id) ON DELETE SET NULL
+  `)
+
+  await pool.query(`
     UPDATE schedule_intakes
     SET intake_status = CASE
       WHEN completed_at IS NOT NULL THEN 'completed'
       ELSE COALESCE(intake_status, 'pending')
     END
   `)
+
+  await normalizeLegacyOvernightIntakes()
 }
 
 export async function initializeDatabase() {
@@ -307,6 +450,13 @@ function unavailableResponse(response) {
 }
 
 function formatSchedule(row, intakes) {
+  const doseTimes =
+    (row.schedule_type ?? 'prescribed') === 'supplement'
+      ? makeSupplementDoseTimes()
+      : makePrescribedDoseTimes(row.times_per_day, row.start_time ?? '08:00')
+  const scheduleStartDate = toDateKey(row.start_date)
+  const scheduleStartMinutes = parseTimeToMinutes(row.start_time ?? '08:00')
+
   return {
     id: row.id,
     token: row.token,
@@ -321,7 +471,16 @@ function formatSchedule(row, intakes) {
     createdAt: row.created_at,
     intakes: intakes.map((intake) => ({
       id: intake.id,
+      cycleDayLabel: addDaysToDateKey(scheduleStartDate, intake.day_index),
+      doseIndex: intake.dose_index,
       dayLabel: toDateKey(intake.scheduled_at),
+      doseTime: doseTimes[intake.dose_index] ?? doseTimes[0] ?? '08:00',
+      isOvernight:
+        (row.schedule_type ?? 'prescribed') === 'prescribed' &&
+        intake.dose_index > 0 &&
+        parseTimeToMinutes(
+          doseTimes[intake.dose_index] ?? doseTimes[0] ?? '08:00',
+        ) < scheduleStartMinutes,
       doseLabel:
         (row.schedule_type ?? 'prescribed') === 'supplement'
           ? 'Daily check-in'
@@ -358,6 +517,7 @@ function formatActivityLog(row) {
     actionType: row.action_type,
     summary: row.summary,
     scheduleToken: row.schedule_token,
+    familyMemberId: row.family_member_id ?? null,
     medicine: row.medicine,
     details: row.details ?? {},
     createdAt: row.created_at,
@@ -370,8 +530,23 @@ function formatFamilyMember(row) {
     name: row.name,
     birthdate: toDateKey(row.birthdate),
     gender: row.gender,
+    avatarDataUrl: row.avatar_data_url ?? null,
     createdAt: row.created_at,
   }
+}
+
+function normalizeAvatarDataUrl(value) {
+  const avatarDataUrl = String(value ?? '').trim()
+
+  if (!avatarDataUrl) {
+    return null
+  }
+
+  if (!avatarDataUrl.startsWith('data:image/')) {
+    return null
+  }
+
+  return avatarDataUrl
 }
 
 async function sweepMissedIntakes(client) {
@@ -384,6 +559,7 @@ async function sweepMissedIntakes(client) {
             si.schedule_id,
             si.scheduled_at,
             s.token AS schedule_token,
+            s.family_member_id,
             s.medicine
           FROM schedule_intakes si
           JOIN schedules s ON s.id = si.schedule_id
@@ -403,6 +579,7 @@ async function sweepMissedIntakes(client) {
             si.schedule_id,
             overdue.scheduled_at,
             overdue.schedule_token,
+            overdue.family_member_id,
             overdue.medicine
         )
         SELECT * FROM updated
@@ -415,8 +592,11 @@ async function sweepMissedIntakes(client) {
             si.id,
             si.schedule_id,
             si.scheduled_at,
+            si.dose_index,
             s.token AS schedule_token,
-            s.medicine
+            s.medicine,
+            s.start_time,
+            s.times_per_day
           FROM schedule_intakes si
           JOIN schedules s ON s.id = si.schedule_id
           WHERE s.schedule_type = 'prescribed'
@@ -449,6 +629,7 @@ async function sweepMissedIntakes(client) {
         summary: `${row.medicine} dose missed.`,
         scheduleId: row.schedule_id,
         scheduleToken: row.schedule_token,
+        familyMemberId: row.family_member_id ?? null,
         medicine: row.medicine,
         details: {
           intakeId: row.id,
@@ -461,7 +642,15 @@ async function sweepMissedIntakes(client) {
 
 async function insertActivityLog(
   client,
-  { actionType, summary, scheduleId = null, scheduleToken = null, medicine = null, details = {} },
+  {
+    actionType,
+    summary,
+    scheduleId = null,
+    scheduleToken = null,
+    familyMemberId = null,
+    medicine = null,
+    details = {},
+  },
 ) {
   await client.query(
     `INSERT INTO activity_logs (
@@ -469,15 +658,17 @@ async function insertActivityLog(
        summary,
        schedule_id,
        schedule_token,
+       family_member_id,
        medicine,
        details
      )
-     VALUES ($1, $2, $3, $4, $5, $6)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
     [
       actionType,
       summary,
       scheduleId,
       scheduleToken,
+      familyMemberId,
       medicine,
       JSON.stringify(details),
     ],
@@ -496,9 +687,11 @@ async function completeIntake(intakeId, completed) {
           si.id,
           si.schedule_id,
           si.scheduled_at,
+          si.dose_index,
           si.completed_at,
           si.intake_status,
           s.token AS schedule_token,
+          s.family_member_id,
           s.medicine,
           s.schedule_type,
           s.start_time,
@@ -517,6 +710,29 @@ async function completeIntake(intakeId, completed) {
     }
 
     const intakeRow = intakeResult.rows[0]
+    const scheduledAt = new Date(intakeRow.scheduled_at)
+    const scheduledDateKey = toDateKey(intakeRow.scheduled_at)
+    const currentDateKey = toDateKey(new Date())
+    const isSupplement = intakeRow.schedule_type === 'supplement'
+    const cutoff = new Date()
+    cutoff.setHours(cutoff.getHours() - 5)
+    const hasActuallyMissedWindow =
+      (isSupplement && scheduledDateKey < currentDateKey) ||
+      (!isSupplement && scheduledAt <= cutoff)
+
+    if (intakeRow.intake_status === 'missed' && !hasActuallyMissedWindow) {
+      await client.query(
+        `
+          UPDATE schedule_intakes
+          SET intake_status = 'pending',
+              missed_at = NULL
+          WHERE id = $1
+        `,
+        [intakeId],
+      )
+      intakeRow.intake_status = 'pending'
+      intakeRow.missed_at = null
+    }
 
     if (intakeRow.intake_status === 'missed') {
       await client.query('ROLLBACK')
@@ -529,17 +745,7 @@ async function completeIntake(intakeId, completed) {
     }
 
     if (completed) {
-      const scheduledAt = new Date(intakeRow.scheduled_at)
-      const scheduledDateKey = toDateKey(intakeRow.scheduled_at)
-      const currentDateKey = toDateKey(new Date())
-      const isSupplement = intakeRow.schedule_type === 'supplement'
-      const cutoff = new Date()
-      cutoff.setHours(cutoff.getHours() - 5)
-
-      if (
-        (isSupplement && scheduledDateKey < currentDateKey) ||
-        (!isSupplement && scheduledAt <= cutoff)
-      ) {
+      if (hasActuallyMissedWindow) {
         const missedResult = await client.query(
           `
             UPDATE schedule_intakes
@@ -555,6 +761,7 @@ async function completeIntake(intakeId, completed) {
           summary: `${intakeRow.medicine} dose missed.`,
           scheduleId: intakeRow.schedule_id,
           scheduleToken: intakeRow.schedule_token,
+          familyMemberId: intakeRow.family_member_id ?? null,
           medicine: intakeRow.medicine,
           details: {
             intakeId,
@@ -597,6 +804,7 @@ async function completeIntake(intakeId, completed) {
         : `${intakeRow.medicine} reopened.`,
       scheduleId: intakeRow.schedule_id,
       scheduleToken: intakeRow.schedule_token,
+      familyMemberId: intakeRow.family_member_id ?? null,
       medicine: intakeRow.medicine,
       details: {
         intakeId,
@@ -632,6 +840,7 @@ async function createFamilyMember(body) {
   const name = String(body?.name ?? '').trim()
   const birthdate = String(body?.birthdate ?? '').trim()
   const gender = String(body?.gender ?? '').trim() === 'female' ? 'female' : 'male'
+  const avatarDataUrl = normalizeAvatarDataUrl(body?.avatarDataUrl)
 
   if (!name) {
     return { status: 400, body: { error: 'Please provide a family member name.' } }
@@ -645,13 +854,81 @@ async function createFamilyMember(body) {
 
   try {
     const result = await client.query(
-      `INSERT INTO family_members (name, birthdate, gender)
-       VALUES ($1, $2, $3)
+      `INSERT INTO family_members (name, birthdate, gender, avatar_data_url)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [name, birthdate, gender],
+      [name, birthdate, gender, avatarDataUrl],
     )
 
     return { status: 201, body: formatFamilyMember(result.rows[0]) }
+  } finally {
+    client.release()
+  }
+}
+
+async function updateFamilyMemberById(id, body) {
+  const memberId = String(id ?? '').trim()
+  const name = String(body?.name ?? '').trim()
+  const birthdate = String(body?.birthdate ?? '').trim()
+  const gender = String(body?.gender ?? '').trim() === 'female' ? 'female' : 'male'
+  const avatarDataUrl = normalizeAvatarDataUrl(body?.avatarDataUrl)
+
+  if (!memberId) {
+    return { status: 400, body: { error: 'Family member id is required.' } }
+  }
+
+  if (!name) {
+    return { status: 400, body: { error: 'Please provide a family member name.' } }
+  }
+
+  if (!birthdate) {
+    return { status: 400, body: { error: 'Please provide a birthdate.' } }
+  }
+
+  const client = await pool.connect()
+
+  try {
+    const result = await client.query(
+      `UPDATE family_members
+       SET name = $2,
+           birthdate = $3,
+           gender = $4,
+           avatar_data_url = $5
+       WHERE id = $1
+       RETURNING *`,
+      [memberId, name, birthdate, gender, avatarDataUrl],
+    )
+
+    if (result.rowCount === 0) {
+      return { status: 404, body: { error: 'Family member not found.' } }
+    }
+
+    return { status: 200, body: formatFamilyMember(result.rows[0]) }
+  } finally {
+    client.release()
+  }
+}
+
+async function deleteFamilyMemberById(id) {
+  const memberId = String(id ?? '').trim()
+
+  if (!memberId) {
+    return { status: 400, body: { error: 'Family member id is required.' } }
+  }
+
+  const client = await pool.connect()
+
+  try {
+    const result = await client.query(
+      'DELETE FROM family_members WHERE id = $1 RETURNING *',
+      [memberId],
+    )
+
+    if (result.rowCount === 0) {
+      return { status: 404, body: { error: 'Family member not found.' } }
+    }
+
+    return { status: 204, body: null }
   } finally {
     client.release()
   }
@@ -668,6 +945,7 @@ async function updateScheduleByToken(token, body) {
   const timesPerDay = Number(body?.timesPerDay)
   const startDate = String(body?.startDate ?? '').trim()
   const startTime = String(body?.startTime ?? '').trim()
+  const timezoneOffsetMinutes = Number(body?.timezoneOffsetMinutes ?? 0)
 
   if (!token) {
     return { status: 400, body: { error: 'Schedule token is required.' } }
@@ -775,6 +1053,8 @@ async function updateScheduleByToken(token, body) {
         startDate: normalizedStartDate,
         durationDays,
         doseTimes: timing.doseTimes,
+        startTime: timing.startTime,
+        timezoneOffsetMinutes,
       }).map((intakeRow) => {
         const [scheduleId, dayIndex, doseIndex, scheduledAt] = intakeRow
         return [
@@ -806,17 +1086,18 @@ async function updateScheduleByToken(token, body) {
       summary: `${medicine} schedule updated.`,
       scheduleId: scheduleRow.id,
       scheduleToken: token,
+      familyMemberId,
       medicine,
-        details: {
-          before: {
-            medicine: scheduleRow.medicine,
-            familyMemberId: scheduleRow.family_member_id ?? null,
-            scheduleType: scheduleRow.schedule_type ?? 'prescribed',
-            durationDays: scheduleRow.duration_days,
-            timesPerDay: scheduleRow.times_per_day,
-            startTime: scheduleRow.start_time ?? null,
-            startDate: toDateKey(scheduleRow.start_date),
-          },
+      details: {
+        before: {
+          medicine: scheduleRow.medicine,
+          familyMemberId: scheduleRow.family_member_id ?? null,
+          scheduleType: scheduleRow.schedule_type ?? 'prescribed',
+          durationDays: scheduleRow.duration_days,
+          timesPerDay: scheduleRow.times_per_day,
+          startTime: scheduleRow.start_time ?? null,
+          startDate: toDateKey(scheduleRow.start_date),
+        },
         after: {
           medicine,
           familyMemberId,
@@ -831,7 +1112,7 @@ async function updateScheduleByToken(token, body) {
     })
 
     const intakesResult = await client.query(
-      'SELECT * FROM schedule_intakes WHERE schedule_id = $1 ORDER BY scheduled_at ASC',
+      'SELECT * FROM schedule_intakes WHERE schedule_id = $1 ORDER BY day_index ASC, dose_index ASC',
       [scheduleRow.id],
     )
 
@@ -871,6 +1152,7 @@ api.get('/activity-logs', async (request, response) => {
 
     const requestedLimit = Number(request.query?.limit ?? 5)
     const requestedOffset = Number(request.query?.offset ?? 0)
+    const familyMemberId = String(request.query?.familyMemberId ?? '').trim() || null
     const limit = Number.isFinite(requestedLimit)
       ? Math.min(Math.max(Math.trunc(requestedLimit), 1), 25)
       : 5
@@ -878,18 +1160,26 @@ api.get('/activity-logs', async (request, response) => {
       ? Math.max(Math.trunc(requestedOffset), 0)
       : 0
 
+    const whereClause = familyMemberId ? 'WHERE family_member_id = $3' : ''
+    const countWhereClause = familyMemberId ? 'WHERE family_member_id = $1' : ''
+    const queryValues = familyMemberId
+      ? [limit, offset, familyMemberId]
+      : [limit, offset]
+
     const countResult = await client.query(
-      'SELECT COUNT(*)::int AS count FROM activity_logs',
+      `SELECT COUNT(*)::int AS count FROM activity_logs ${countWhereClause}`,
+      familyMemberId ? [familyMemberId] : [],
     )
     const result = await client.query(
       `
         SELECT *
         FROM activity_logs
+        ${whereClause}
         ORDER BY created_at DESC
         LIMIT $1
         OFFSET $2
       `,
-      [limit, offset],
+      queryValues,
     )
 
     await client.query('COMMIT')
@@ -933,6 +1223,31 @@ api.post('/family-members', async (request, response) => {
   response.status(result.status).json(result.body)
 })
 
+api.patch('/family-members/:id', async (request, response) => {
+  if (!databaseReady) {
+    unavailableResponse(response)
+    return
+  }
+
+  const result = await updateFamilyMemberById(request.params.id, request.body)
+  response.status(result.status).json(result.body)
+})
+
+api.delete('/family-members/:id', async (request, response) => {
+  if (!databaseReady) {
+    unavailableResponse(response)
+    return
+  }
+
+  const result = await deleteFamilyMemberById(request.params.id)
+  if (result.status === 204) {
+    response.status(204).send()
+    return
+  }
+
+  response.status(result.status).json(result.body)
+})
+
 api.get('/schedules', async (request, response) => {
   if (!databaseReady) {
     unavailableResponse(response)
@@ -966,7 +1281,7 @@ api.get('/schedules', async (request, response) => {
       }
 
       const intakesResult = await client.query(
-        'SELECT * FROM schedule_intakes WHERE schedule_id = $1 ORDER BY scheduled_at ASC',
+        'SELECT * FROM schedule_intakes WHERE schedule_id = $1 ORDER BY day_index ASC, dose_index ASC',
         [scheduleResult.rows[0].id],
       )
 
@@ -1030,7 +1345,7 @@ api.get('/schedules/:token', async (request, response) => {
     }
 
     const intakesResult = await client.query(
-      'SELECT * FROM schedule_intakes WHERE schedule_id = $1 ORDER BY scheduled_at ASC',
+      'SELECT * FROM schedule_intakes WHERE schedule_id = $1 ORDER BY day_index ASC, dose_index ASC',
       [scheduleResult.rows[0].id],
     )
 
@@ -1060,6 +1375,7 @@ api.post('/schedules', async (request, response) => {
   const timesPerDay = Number(request.body?.timesPerDay)
   const startDate = String(request.body?.startDate ?? '').trim()
   const startTime = String(request.body?.startTime ?? '').trim()
+  const timezoneOffsetMinutes = Number(request.body?.timezoneOffsetMinutes ?? 0)
 
   if (!medicine) {
     response.status(400).json({ error: 'Please provide a medicine name.' })
@@ -1119,6 +1435,8 @@ api.post('/schedules', async (request, response) => {
       startDate: normalizedStartDate,
       durationDays,
       doseTimes: timing.doseTimes,
+      startTime: timing.startTime,
+      timezoneOffsetMinutes,
     })
 
     for (const intakeRow of intakeRows) {
@@ -1134,6 +1452,7 @@ api.post('/schedules', async (request, response) => {
       summary: `${medicine} schedule created.`,
       scheduleId: scheduleRow.id,
       scheduleToken: token,
+      familyMemberId,
       medicine,
       details: {
         scheduleType,
@@ -1158,7 +1477,7 @@ api.post('/schedules', async (request, response) => {
     )
 
     const intakesResult = await client.query(
-      'SELECT * FROM schedule_intakes WHERE schedule_id = $1 ORDER BY scheduled_at ASC',
+      'SELECT * FROM schedule_intakes WHERE schedule_id = $1 ORDER BY day_index ASC, dose_index ASC',
       [scheduleRow.id],
     )
 
@@ -1199,125 +1518,12 @@ api.get('/schedules/:token', async (request, response) => {
     }
 
     const intakesResult = await client.query(
-      'SELECT * FROM schedule_intakes WHERE schedule_id = $1 ORDER BY scheduled_at ASC',
+      'SELECT * FROM schedule_intakes WHERE schedule_id = $1 ORDER BY day_index ASC, dose_index ASC',
       [scheduleResult.rows[0].id],
     )
 
     await client.query('COMMIT')
     response.json(formatSchedule(scheduleResult.rows[0], intakesResult.rows))
-  } catch (error) {
-    await client.query('ROLLBACK')
-    throw error
-  } finally {
-    client.release()
-  }
-})
-
-api.post('/schedules', async (request, response) => {
-  if (!databaseReady) {
-    unavailableResponse(response)
-    return
-  }
-
-  const medicine = String(request.body?.medicine ?? '').trim()
-  const scheduleType =
-    String(request.body?.scheduleType ?? 'prescribed').trim() === 'supplement'
-      ? 'supplement'
-      : 'prescribed'
-  const durationDays = Number(request.body?.durationDays)
-  const timesPerDay = Number(request.body?.timesPerDay)
-  const startDate = String(request.body?.startDate ?? '').trim()
-
-  if (!medicine) {
-    response.status(400).json({ error: 'Please provide a medicine name.' })
-    return
-  }
-
-  if (!Number.isInteger(durationDays) || durationDays < 1) {
-    response.status(400).json({ error: 'Duration must be at least 1 day.' })
-    return
-  }
-
-  if (!Number.isInteger(timesPerDay) || timesPerDay < 1) {
-    response.status(400).json({ error: 'Times per day must be at least 1.' })
-    return
-  }
-
-  const normalizedStartDate = startDate || toDateKey(new Date())
-  const timeSlots = makeDoseTimes(timesPerDay)
-  const token = crypto.randomUUID().slice(0, 12)
-
-  const client = await pool.connect()
-
-  try {
-    await client.query('BEGIN')
-
-    const scheduleInsert = await client.query(
-      `INSERT INTO schedules (token, medicine, schedule_type, duration_days, times_per_day, start_time, start_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING *`,
-      [
-        token,
-        medicine,
-        scheduleType,
-        durationDays,
-        timing.timesPerDay,
-        timing.startTime,
-        normalizedStartDate,
-      ],
-    )
-
-    const scheduleRow = scheduleInsert.rows[0]
-    const intakeRows = buildIntakeRows({
-      scheduleId: scheduleRow.id,
-      startDate: normalizedStartDate,
-      durationDays,
-      doseTimes: timing.doseTimes,
-    })
-
-    for (const intakeRow of intakeRows) {
-      await client.query(
-        `INSERT INTO schedule_intakes (schedule_id, day_index, dose_index, scheduled_at)
-         VALUES ($1, $2, $3, $4)`,
-        intakeRow,
-      )
-    }
-
-    await insertActivityLog(client, {
-      actionType: 'schedule_created',
-      summary: `${medicine} schedule created.`,
-      scheduleId: scheduleRow.id,
-      scheduleToken: token,
-      medicine,
-      details: {
-        scheduleType,
-        durationDays,
-        timesPerDay: timing.timesPerDay,
-        startTime: timing.startTime,
-        startDate: normalizedStartDate,
-        doseTimes: timing.doseTimes,
-      },
-    })
-
-    const detailResult = await client.query(
-      `
-        SELECT s.*, fm.name AS family_member_name
-        FROM schedules s
-        LEFT JOIN family_members fm ON fm.id = s.family_member_id
-        WHERE s.id = $1
-        LIMIT 1
-      `,
-      [scheduleRow.id],
-    )
-
-    const intakesResult = await client.query(
-      'SELECT * FROM schedule_intakes WHERE schedule_id = $1 ORDER BY scheduled_at ASC',
-      [scheduleRow.id],
-    )
-
-    await client.query('COMMIT')
-
-    response.status(201).json(formatSchedule(detailResult.rows[0], intakesResult.rows))
   } catch (error) {
     await client.query('ROLLBACK')
     throw error
@@ -1408,6 +1614,7 @@ api.delete('/schedules/:token', async (request, response) => {
         summary: `${scheduleRow.medicine} schedule deleted.`,
         scheduleId: scheduleRow.id,
         scheduleToken: scheduleRow.token,
+        familyMemberId: scheduleRow.family_member_id ?? null,
         medicine: scheduleRow.medicine,
         details: {
           durationDays: scheduleRow.duration_days,
