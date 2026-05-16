@@ -271,7 +271,7 @@ async function normalizeLegacyOvernightIntakes() {
 
     await client.query(`
       UPDATE schedule_intakes si
-      SET intake_status = 'pending',
+      SET intake_status = 'completed',
           missed_at = NULL
       FROM schedules s
       WHERE s.id = si.schedule_id
@@ -487,7 +487,7 @@ function formatSchedule(row, intakes) {
           : `${row.medicine} dose ${intake.dose_index + 1}`,
       scheduledAt: intake.scheduled_at,
       completedAt: intake.completed_at,
-      status: intake.intake_status ?? (intake.completed_at ? 'completed' : 'pending'),
+      status: intake.completed_at ? 'completed' : (intake.intake_status ?? 'pending'),
       missedAt: intake.missed_at,
     })),
   }
@@ -1034,19 +1034,19 @@ async function updateScheduleByToken(token, body) {
 
     if (shouldRebuildIntakes) {
       const existingIntakesResult = await client.query(
-        'SELECT day_index, dose_index, completed_at FROM schedule_intakes WHERE schedule_id = $1',
+        `
+          SELECT id, day_index, dose_index, scheduled_at, completed_at, intake_status, missed_at
+          FROM schedule_intakes
+          WHERE schedule_id = $1
+        `,
         [scheduleRow.id],
       )
-      const previousCompletedAtByScheduledAt = new Map(
+      const existingIntakesByKey = new Map(
         existingIntakesResult.rows.map((intake) => [
           `${intake.day_index}:${intake.dose_index}`,
-          intake.completed_at,
+          intake,
         ]),
       )
-
-      await client.query('DELETE FROM schedule_intakes WHERE schedule_id = $1', [
-        scheduleRow.id,
-      ])
 
       const nextIntakeRows = buildIntakeRows({
         scheduleId: scheduleRow.id,
@@ -1055,30 +1055,66 @@ async function updateScheduleByToken(token, body) {
         doseTimes: timing.doseTimes,
         startTime: timing.startTime,
         timezoneOffsetMinutes,
-      }).map((intakeRow) => {
-        const [scheduleId, dayIndex, doseIndex, scheduledAt] = intakeRow
-        return [
-          scheduleId,
-          dayIndex,
-          doseIndex,
-          scheduledAt,
-          previousCompletedAtByScheduledAt.get(`${dayIndex}:${doseIndex}`) ?? null,
-        ]
       })
 
+      const nextKeys = new Set()
+
       for (const intakeRow of nextIntakeRows) {
+        const [scheduleId, dayIndex, doseIndex, scheduledAt] = intakeRow
+        const key = `${dayIndex}:${doseIndex}`
+        nextKeys.add(key)
+
+        const existingIntake = existingIntakesByKey.get(key)
+
+        if (existingIntake) {
+          if (new Date(existingIntake.scheduled_at).toISOString() !== scheduledAt) {
+            await client.query(
+              `UPDATE schedule_intakes
+               SET scheduled_at = $2
+               WHERE id = $1`,
+              [existingIntake.id, scheduledAt],
+            )
+          }
+
+          continue
+        }
+
         await client.query(
           `INSERT INTO schedule_intakes (
              schedule_id,
              day_index,
              dose_index,
              scheduled_at,
-             completed_at
+             completed_at,
+             intake_status,
+             missed_at
            )
-           VALUES ($1, $2, $3, $4, $5)`,
-          intakeRow,
+           VALUES ($1, $2, $3, $4, NULL, 'pending', NULL)`,
+          [scheduleId, dayIndex, doseIndex, scheduledAt],
         )
       }
+
+      const obsoleteIntakeIds = existingIntakesResult.rows
+        .filter((intake) => !nextKeys.has(`${intake.day_index}:${intake.dose_index}`))
+        .map((intake) => intake.id)
+
+      if (obsoleteIntakeIds.length > 0) {
+        await client.query(
+          'DELETE FROM schedule_intakes WHERE id = ANY($1::uuid[])',
+          [obsoleteIntakeIds],
+        )
+      }
+
+      await client.query(
+        `
+          UPDATE schedule_intakes
+          SET intake_status = 'completed'
+          WHERE schedule_id = $1
+            AND completed_at IS NOT NULL
+            AND intake_status IS DISTINCT FROM 'completed'
+        `,
+        [scheduleRow.id],
+      )
     }
 
     await insertActivityLog(client, {
