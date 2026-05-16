@@ -4,6 +4,12 @@
   position: relative;
 }
 
+:root {
+  --appbar-z: 1100;
+  --overlay-backdrop-z: 1450;
+  --overlay-surface-z: 1460;
+}
+
 .panel {
   position: relative;
   z-index: 1;
@@ -17,84 +23,6 @@
   display: grid;
   gap: 24px;
   align-items: start;
-}
-
-.site-header {
-  width: 100%;
-  border-bottom: 1px solid rgba(41, 182, 246, 0.12);
-  background: rgba(255, 255, 255, 0.84);
-  backdrop-filter: blur(10px);
-}
-
-.site-header-inner {
-  width: min(1240px, 100%);
-  margin: 0 auto;
-  padding: 20px 28px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-}
-
-.site-brand {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  text-align: left;
-  cursor: pointer;
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.site-brand strong {
-  color: var(--ink);
-  font-family: var(--heading);
-  font-size: 1.5rem;
-  line-height: 1.05;
-  letter-spacing: -0.05em;
-}
-
-.site-nav {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.site-link {
-  appearance: none;
-  border: 1px solid rgba(41, 182, 246, 0.14);
-  background: rgba(255, 255, 255, 0.68);
-  color: rgba(15, 38, 56, 0.72);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 0 16px;
-  border-radius: 999px;
-  font: inherit;
-  font-size: 0.98rem;
-  cursor: pointer;
-  transition:
-    background-color 180ms ease,
-    color 180ms ease,
-    border-color 180ms ease,
-    transform 180ms ease;
-}
-
-.site-link:hover {
-  background: rgba(225, 245, 254, 0.82);
-  transform: translateY(-1px);
-}
-
-.site-link.active {
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #ffffff;
-  border-color: transparent;
-  box-shadow: 0 10px 22px rgba(41, 182, 246, 0.18);
 }
 
 .app-main {
@@ -258,7 +186,7 @@
 
 .dashboard-grid,
 .calendar-view {
-  animation: rise 420ms ease-out both;
+  animation: fade-in 220ms ease-out both;
 }
 
 .dashboard-grid {
@@ -273,25 +201,17 @@
 .progress-card {
   border-radius: 28px;
   border: 1px solid rgba(41, 182, 246, 0.12);
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.92);
 }
 
 .activity-log-card {
   border-radius: 28px;
   border: 1px solid rgba(41, 182, 246, 0.16);
-  background:
-    radial-gradient(
-      circle at top right,
-      rgba(255, 255, 255, 0.52),
-      transparent 45%
-    ),
-    linear-gradient(
-      160deg,
-      rgba(225, 245, 254, 0.84),
-      rgba(179, 229, 252, 0.72)
-    );
-  backdrop-filter: blur(8px);
+  background: linear-gradient(
+    160deg,
+    rgba(225, 245, 254, 0.96),
+    rgba(179, 229, 252, 0.88)
+  );
 }
 
 .lead {
@@ -310,6 +230,12 @@
 .calendar-section,
 .dashboard-grid {
   margin-top: 24px;
+}
+
+.schedule-list-section>div {
+  display: flex;
+  flex-direction: column;
+  row-gap: 68px;
 }
 
 .section-heading {
@@ -346,22 +272,7 @@
   padding: 24px;
   border-radius: 30px;
   border: 1px solid rgba(41, 182, 246, 0.14);
-  background:
-    radial-gradient(
-      circle at top right,
-      rgba(255, 255, 255, 0.52),
-      transparent 40%
-    ),
-    rgba(255, 255, 255, 0.68);
-  backdrop-filter: blur(10px);
-}
-
-.tracker-section-prescribed {
-  box-shadow: 0 16px 36px rgba(41, 182, 246, 0.08);
-}
-
-.tracker-section-supplement {
-  box-shadow: 0 16px 36px rgba(129, 212, 250, 0.08);
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .tracker-section .section-heading {
@@ -438,9 +349,8 @@
   padding: 30px;
   border-radius: 30px;
   border: 1px solid rgba(41, 182, 246, 0.12);
-  background: rgba(255, 255, 255, 0.84);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 18px 44px rgba(41, 182, 246, 0.08);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 10px 26px rgba(41, 182, 246, 0.06);
 }
 
 .family-card .lead {
@@ -482,7 +392,7 @@
   background: rgba(255, 255, 255, 0.96);
   display: grid;
   gap: 20px;
-  box-shadow: 0 12px 28px rgba(15, 38, 56, 0.05);
+  box-shadow: 0 8px 20px rgba(15, 38, 56, 0.04);
 }
 
 .family-panel-heading {
@@ -540,6 +450,8 @@
   );
   border: 1px solid rgba(41, 182, 246, 0.08);
   box-shadow: 0 10px 22px rgba(41, 182, 246, 0.05);
+  content-visibility: auto;
+  contain-intrinsic-size: 320px 285px;
 }
 
 .family-member-avatar,
@@ -851,13 +763,13 @@
 .family-drawer-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 22;
+  z-index: var(--overlay-backdrop-z);
   display: block;
   background: rgba(15, 38, 56, 0.42);
-  backdrop-filter: blur(10px);
 }
 
 .family-drawer {
+  position: relative;
   width: min(440px, calc(100vw - 24px));
   height: 100svh;
   overflow: auto;
@@ -871,10 +783,11 @@
     ),
     linear-gradient(
       180deg,
-      rgba(255, 255, 255, 0.98),
+    rgba(255, 255, 255, 0.98),
       rgba(241, 249, 255, 0.98)
     );
-  box-shadow: 28px 0 60px rgba(15, 38, 56, 0.24);
+  box-shadow: 20px 0 40px rgba(15, 38, 56, 0.18);
+  z-index: var(--overlay-surface-z);
   animation: slide-in 260ms ease-out both;
 }
 
@@ -969,11 +882,13 @@
   min-width: 0;
   border-radius: 26px;
   border: 1px solid rgba(41, 182, 246, 0.12);
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.92);
   overflow: hidden;
   display: grid;
   gap: 0;
-  box-shadow: 0 10px 30px rgba(41, 182, 246, 0.08);
+  box-shadow: 0 8px 20px rgba(41, 182, 246, 0.06);
+  content-visibility: auto;
+  contain-intrinsic-size: 360px 420px;
 }
 
 .schedule-card-banner {
@@ -1004,7 +919,6 @@
   width: 120px;
   height: 120px;
   background: rgba(255, 255, 255, 0.16);
-  filter: blur(2px);
 }
 
 .schedule-card-banner::after {
@@ -1013,7 +927,6 @@
   width: 140px;
   height: 140px;
   background: rgba(255, 255, 255, 0.15);
-  filter: blur(10px);
 }
 
 .schedule-card-banner-copy {
@@ -1594,15 +1507,15 @@
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: var(--overlay-backdrop-z);
   display: grid;
   place-items: center;
   padding: 20px;
   background: rgba(15, 38, 56, 0.42);
-  backdrop-filter: blur(10px);
 }
 
 .modal-panel {
+  position: relative;
   width: min(820px, 100%);
   max-height: min(92svh, 920px);
   overflow: auto;
@@ -1620,7 +1533,8 @@
       rgba(255, 255, 255, 0.98),
       rgba(241, 249, 255, 0.98)
     );
-  box-shadow: 0 30px 80px rgba(15, 38, 56, 0.24);
+  box-shadow: 0 22px 56px rgba(15, 38, 56, 0.18);
+  z-index: var(--overlay-surface-z);
 }
 
 .modal-header {
@@ -1778,7 +1692,7 @@
 .calendar-surface {
   border-radius: 28px;
   border: 1px solid rgba(41, 182, 246, 0.14);
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.92);
   overflow: hidden;
 }
 
@@ -1824,6 +1738,8 @@
   gap: 10px;
   align-content: start;
   background: rgba(255, 255, 255, 0.9);
+  content-visibility: auto;
+  contain-intrinsic-size: 170px 170px;
 }
 
 .calendar-cell:last-child {
@@ -2156,6 +2072,15 @@
   }
 }
 
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes slide-in {
   from {
     transform: translateX(-100%);
@@ -2166,10 +2091,10 @@
 }
 
 @media (max-width: 980px) {
-  .app-shell {
-    padding: 16px;
+  .app-main {
+    gap: 0;
   }
-
+  
   .family-avatar-strip {
     gap: 0;
     justify-content: space-between;
@@ -2227,16 +2152,6 @@
     grid-template-columns: 1fr;
   }
 
-  .site-header {
-    border-radius: 0;
-  }
-
-  .site-header-inner {
-    padding: 18px 18px;
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
   .family-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     max-height: none;
@@ -2244,10 +2159,6 @@
 
   .family-drawer {
     width: min(520px, calc(100vw - 16px));
-  }
-
-  .site-nav {
-    width: 100%;
   }
 
   .month-nav {
@@ -2286,16 +2197,6 @@
   .calendar-header-actions,
   .calendar-summary {
     width: 100%;
-  }
-
-  .site-brand strong {
-    font-size: 1.28rem;
-  }
-
-  .site-link {
-    min-height: 40px;
-    padding: 0 14px;
-    font-size: 0.92rem;
   }
 
   .calendar-scroll {
@@ -2421,5 +2322,22 @@
 
   .drawer-actions > button {
     flex: 1 1 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .dashboard-grid,
+  .calendar-view,
+  .family-drawer {
+    animation: none !important;
   }
 }
