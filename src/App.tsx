@@ -1206,9 +1206,6 @@ function App() {
   const totalCount = selectedSchedule?.intakes.length ?? 0;
   const completionPercent =
     totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
-  const selectedFamilyMember = selectedFamilyMemberId
-    ? familyMembers.find((member) => member.id === selectedFamilyMemberId) ?? null
-    : null;
   const visibleSchedules = selectedFamilyMemberId
     ? schedules.filter(
         (schedule) => schedule.familyMemberId === selectedFamilyMemberId,
